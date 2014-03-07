@@ -14,7 +14,7 @@ argv = require('optimist')
 
 Rx = require 'rx'
 Q = require 'q'
-{_} = require('underscore')
+{_} = require 'underscore'
 express = require 'express'
 
 messageProcessors = [((m)-> Q(m)), ((m)-> Q(m)), ((m)-> Q(m))]
@@ -46,7 +46,8 @@ class Stats
     @locallyLocked = 0
     @lockedMessages = 0
     @newMessages = 0
-    @lockedFailedMessages = 0
+    @lockFailedMessages = 0
+    @panicMode = false
 
   get: ->
     started: @started
@@ -55,11 +56,12 @@ class Stats
     locallyLocked: @locallyLocked
     lockedMessages: @lockedMessages
     newMessages: @newMessages
-    lockedFailedMessages: @lockedFailedMessages
+    lockFailedMessages: @lockFailedMessages
+    panicMode: @panicMode
 
   applyBackpressureAtTick: (tick) ->
     @lastTick = tick
-    @messagesInProgress() is 0
+    @panicMode or @messagesInProgress() is not 0
 
   messagesInProgress: () ->
     @messagesIn - @messagesOut
@@ -74,7 +76,6 @@ class Stats
   lockedMessage: (msg) ->
     @lockedMessages = @lockedMessages + 1
 
-
   unlockedMessage: (msg) ->
     @lockedMessages = @lockedMessages + 1
 
@@ -82,7 +83,7 @@ class Stats
     @messagesOut = @messagesOut + 1
 
   failedLock: (msg) ->
-    @lockedFailedMessages = @lockedFailedMessages + 1
+    @lockFailedMessages = @lockFailedMessages + 1
 
 class BatchMessageService
   constructor: ->
@@ -149,7 +150,7 @@ persistenceService = new MessagePersistenceService(stats)
 allMessages = Rx.Observable
 .interval(500)
 .filter (tick) ->
-  stats.applyBackpressureAtTick(tick)
+  not stats.applyBackpressureAtTick(tick)
 .flatMap ->
   messageService.getMessages()
 .map (msg) ->
@@ -217,11 +218,21 @@ failedMessages
   persistenceService.reportMessageProcessingFailure m, m.processingResults
 .subscribe recycleBin
 
+initiateSelfDestructionSequence = ->
+  Rx.Observable.interval(500).subscribe ->
+    if stats.messagesInProgress() is 0
+      console.info "Graceful exit", stats.get()
+      process.exit 0
 
 statsApp = express()
 
 statsApp.get '/', (req, res) ->
   res.json stats.get()
+
+statsApp.get '/stop', (req, res) ->
+  res.send 'Ok'
+  stats.panicMode = true
+  initiateSelfDestructionSequence()
 
 statsApp.listen 7777, ->
   console.log "Statistics is on port 7777"
@@ -230,5 +241,3 @@ Rx.Observable.interval(3000).subscribe ->
   console.info "+-------------------------------"
   console.info stats.get()
   console.info "+-------------------------------"
-
-

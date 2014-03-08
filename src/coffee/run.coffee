@@ -213,16 +213,17 @@ class MessagePersistenceService
         .then (lastProcessedSN) =>
           @stats.awaitOrderingRemoved out.message
 
-          if out.message.sequenceNumber is (lastProcessedSN + 1)
-            out.sink.onNext out.message
-          else if out.message.sequenceNumber <= lastProcessedSN
+          if out.message.sequenceNumber is (lastProcessedSN.sequenceNumber + 1)
+            @_doSinkMessage lastProcessedSN, out
+          else if out.message.sequenceNumber <= lastProcessedSN.sequenceNumber
             @_messageHasLowSequenceNumber out.message
             out.recycleBin.onNext out.message
+            out.sink.onCompleted()
+            out.errors.onCompleted()
           else
             out.recycleBin.onNext out.message
-
-          out.sink.onCompleted()
-          out.errors.onCompleted()
+            out.sink.onCompleted()
+            out.errors.onCompleted()
         .fail (error) =>
           @stats.awaitOrderingRemoved out.message
 
@@ -239,10 +240,7 @@ class MessagePersistenceService
 
     _.each toSink, (s) =>
       @stats.awaitOrderingRemoved s.message
-
-      s.sink.onNext s.message
-      s.sink.onCompleted()
-      s.errors.onCompleted()
+      @_doSinkMessage {sequenceNumber: justProcessedMsg.sequenceNumber, cached: true}, s
 
   checkAvaialbleForProcessingAndLockLocally: (msg) ->
     @isProcessed msg
@@ -299,17 +297,42 @@ class MessagePersistenceService
   _messageHasLowSequenceNumber: (msg) ->
     console.info "WARN: message has appeared twice for processing (something wrong in the pipeline)", msg
 
+  _doSinkMessage: (sn, box) ->
+    doSink = () ->
+      box.sink.onNext box.message
+      box.sink.onCompleted()
+      box.errors.onCompleted()
+
+    if sn.cached
+      @sphere.getLastProcessedSequenceNumber box.message.resource
+      .then (upToDateSN) ->
+        if upToDateSN.sequenceNumber is sn.sequenceNumber
+          doSink()
+        else
+          # looks like already processed somewhere else
+          box.recycleBin.onNext box.message
+          box.errors.onCompleted()
+          box.sink.onCompleted()
+      .fail (error) ->
+        box.errors.onNext {message: box.message, error: error, processor: "Get last processed sequence number during sinking"}
+        box.errors.onCompleted()
+        box.sink.onCompleted()
+    else
+      doSink()
+
   orderBySequenceNumber: (msg, lock, recycleBin) ->
     sink = new Rx.Subject()
     errors = new Rx.Subject()
 
     @_getLastProcessedSequenceNumber msg
     .then (lastProcessedSN) =>
-      if msg.sequenceNumber is (lastProcessedSN + 1)
-        sink.onNext msg
-        sink.onCompleted()
-        errors.onCompleted()
-      else if msg.sequenceNumber <= lastProcessedSN
+      if msg.sequenceNumber is (lastProcessedSN.sequenceNumber + 1)
+        @_doSinkMessage lastProcessedSN,
+          message: msg
+          sink: sink
+          errors: errors
+          recycleBin: recycleBin
+      else if msg.sequenceNumber <= lastProcessedSN.sequenceNumber
         @_messageHasLowSequenceNumber msg
         recycleBin.onNext msg
         sink.onCompleted()
@@ -338,7 +361,7 @@ class MessagePersistenceService
     cached = @sequenceNumberCache.get @_snCacheKey(msg.resource)
 
     if cached?
-      Q(cached)
+      Q({sequenceNumber: cached, cached: true})
     else
       @sphere.getLastProcessedSequenceNumber msg.resource
       .then (sn) =>
@@ -347,7 +370,7 @@ class MessagePersistenceService
         if not alreadyInCache? or alreadyInCache < sn
           @sequenceNumberCache.set @_snCacheKey(msg.resource), sn
 
-        sn
+        {sequenceNumber: sn, cached: false}
 
 class MessageProcessor
   constructor: (@stats, @messageService, @persistenceService, options) ->

@@ -17,27 +17,6 @@ Q = require 'q'
 {_} = require 'underscore'
 express = require 'express'
 
-messageProcessors = [((m)-> Q(m)), ((m)-> Q(m)), ((m)-> Q(m))]
-
-processMessage = (processors, msg) ->
-  promises = _.map processors, (p) ->
-    p(msg)
-
-  subj = new Rx.Subject()
-
-  Q.all(promises)
-  .then (res) ->
-    msg.processingResults = res
-    subj.onNext(msg)
-    subj.onCompleted()
-  .fail (error) ->
-    msg.processingResults = error
-    subj.onNext(msg)
-    subj.onCompleted()
-  .done()
-
-  subj
-
 class Stats
   constructor: ->
     @started = new Date()
@@ -45,9 +24,11 @@ class Stats
     @messagesOut = 0
     @locallyLocked = 0
     @lockedMessages = 0
+    @unlockedMessages = 0
     @newMessages = 0
     @lockFailedMessages = 0
     @panicMode = false
+    @processingErrors = 0
 
   get: ->
     started: @started
@@ -55,8 +36,10 @@ class Stats
     messagesOut: @messagesOut
     locallyLocked: @locallyLocked
     lockedMessages: @lockedMessages
+    unlockedMessages: @unlockedMessages
     newMessages: @newMessages
     lockFailedMessages: @lockFailedMessages
+    processingErrors: @processingErrors
     panicMode: @panicMode
 
   applyBackpressureAtTick: (tick) ->
@@ -77,13 +60,43 @@ class Stats
     @lockedMessages = @lockedMessages + 1
 
   unlockedMessage: (msg) ->
-    @lockedMessages = @lockedMessages + 1
+    @unlockedMessages = @unlockedMessages + 1
 
   messageFinished: (msg) ->
     @messagesOut = @messagesOut + 1
 
   failedLock: (msg) ->
     @lockFailedMessages = @lockFailedMessages + 1
+
+  processingError: (msg) ->
+    @processingErrors = @processingErrors + 1
+
+
+  _initiateSelfDestructionSequence: ->
+    Rx.Observable.interval(500).subscribe ->
+      if stats.messagesInProgress() is 0
+        console.info "Graceful exit", stats.get()
+        process.exit 0
+
+  startServer: (port) ->
+    statsApp = express()
+
+    statsApp.get '/', (req, res) =>
+      res.json @get()
+
+    statsApp.get '/stop', (req, res) =>
+      res.send 'Ok'
+      @panicMode = true
+      @_initiateSelfDestructionSequence()
+
+    statsApp.listen port, ->
+      console.log "Statistics is on port 7777"
+
+  startPrinter: () ->
+    Rx.Observable.interval(3000).subscribe =>
+      console.info "+-------------------------------"
+      console.info @get()
+      console.info "+-------------------------------"
 
 class BatchMessageService
   constructor: ->
@@ -92,25 +105,29 @@ class BatchMessageService
     # TODO
     return Rx.Observable.fromArray([{id: 1, name: "a"}, {id: 2, name: "b"}, {id: 3, name: "c"}])
 
+class SphereService
+  constructor: (@stats, options) ->
 
 class MessagePersistenceService
-  constructor: (@stats) ->
-    @processedMessages = [2]
+  constructor: (@stats, @sphere) ->
+    @processedMessages = []
     @localLocks = []
 
   checkAvaialbleForProcessingAndLockLocally: (msg) ->
-    available = not @isProcessed(msg) and not @hasLocalLock(msg)
+    @isProcessed msg
+    .then (processed) =>
+      available = not processed and not @hasLocalLock(msg)
 
-    if available
-      @takeLocalLock msg
+      if available
+        @takeLocalLock msg
 
-    available
+      available
 
   hasLocalLock: (msg) ->
     _.contains(@localLocks, msg.id)
 
   isProcessed: (msg) ->
-    _.contains(@processedMessages, msg.id)
+    Q(_.contains(@processedMessages, msg.id))
 
   takeLocalLock: (m) ->
     @stats.locallyLocked = @stats.locallyLocked + 1
@@ -124,120 +141,204 @@ class MessagePersistenceService
 
   lockMessage: (msg) ->
     # TODO
-    Rx.Observable.return(msg).map (m) ->
-      m.locked = true
-      m
+    Q({message: msg, lock: {}})
 
   unlockMessage: (msg) ->
     # TODO
-    Rx.Observable.return(msg).map (m) ->
-      m.locked = false
-      m
+    Q(msg)
 
-  orderBySequenceNumber: (msg, recycleBin) ->
+  orderBySequenceNumber: (msg, lock, recycleBin) ->
     # TODO
     Rx.Observable.return(msg)
 
   reportMessageProcessingFailure: (msg, error) ->
+    console.error msg, error.stack
     # TODO
-    Rx.Observable.return(msg)
+    Q(msg)
 
+class MessageProcessor
+  constructor: (@stats, @messageService, @persistenceService, options) ->
+    @messageProcessors = options.processors # Array[Message => Promise[Something]]
+    @tickDelay = options.tickDelay or 1
+
+    @recycleBin = @_createRecycleBin()
+    @errors = @_createErrorProcessor(@recycleBin)
+    @unrecoverableErrors = @_createUnrecoverableErrorProcessor(@recycleBin)
+
+  run: () ->
+    all = @_allMessages()
+    maybeLocked = @_filterAndLockNewMessages(all)
+    processed = @_doProcessMessages(maybeLocked)
+
+    processed.subscribe @recycleBin
+
+  _doProcessMessages: (messages) ->
+    [locked, nonLocked, errors]  = @_split messages, (box) ->
+      Q(box.lock?)
+
+    errors.subscribe @unrecoverableErrors
+
+    nonLocked
+    .map (box) ->
+      box.message
+    .do (msg) =>
+      @stats.failedLock msg
+    .subscribe @recycleBin
+
+    locked
+    .do (box) =>
+      @stats.lockedMessage box.message
+    .flatMap (box) =>
+      @persistenceService.orderBySequenceNumber box.message, box.lock, @recycleBin
+    .flatMap (msg) =>
+      subj = new Rx.Subject()
+
+      @_processMessage(@messageProcessors, msg)
+      .then (res) ->
+        msg.result = res
+        subj.onNext(msg)
+        subj.onCompleted()
+      .fail (error) =>
+        @errors.onNext {message: msg, error: error}
+        subj.onCompleted()
+      .done()
+
+      subj
+    .flatMap (msg) =>
+      subj = new Rx.Subject()
+
+      @persistenceService.unlockMessage msg
+      .then (msg) ->
+        subj.onNext(msg)
+        subj.onCompleted()
+      .fail (error) ->
+        @unrecoverableErrors.onNext {message: msg, error: error}
+        subj.onComplete()
+      .done()
+
+      subj
+    .do (msg) ->
+      stats.unlockedMessage msg
+
+  _processMessage: (processors, msg) ->
+    try
+      promises = _.map processors, (processor) ->
+        processor msg.message
+
+      Q.all promises
+    catch error
+      Q.reject(error)
+
+  _filterAndLockNewMessages: (messages) ->
+    [newMessages, other, errors]  = @_split messages, (msg) =>
+      @persistenceService.checkAvaialbleForProcessingAndLockLocally msg
+
+    other.subscribe @recycleBin
+    errors.subscribe @unrecoverableErrors
+
+    newMessages
+    .do (msg) =>
+      @stats.newMessage(msg)
+    .flatMap (msg) =>
+      subj = new Rx.Subject()
+
+      @persistenceService.lockMessage msg
+      .then (maybeLocked) ->
+        subj.onNext(maybeLocked)
+        subj.onCompleted()
+      .fail (error) =>
+        @unrecoverableErrors.onNext {message: msg, error: error}
+        subj.onCompleted()
+      .done()
+
+      subj
+
+  _allMessages: () =>
+    Rx.Observable.interval(@tickDelay)
+    .filter (tick) =>
+      not @stats.applyBackpressureAtTick(tick)
+    .flatMap =>
+      @messageService.getMessages()
+    .map (msg) =>
+      @stats.incommingMessage msg
+
+  _createRecycleBin: () ->
+    recycleBin = new Rx.Subject()
+
+    recycleBin
+    .subscribe (msg) =>
+      @persistenceService.releaseLocalLock msg
+      @stats.messageFinished msg
+
+    recycleBin
+
+  _createErrorProcessor: (unrecoverableErrors, recycleBin) ->
+    errorProcessor = new Rx.Subject()
+
+    errorProcessor
+    .flatMap (msg) =>
+      subj = new Rx.Subject()
+
+      @stats.processingError msg
+      @persistenceService.reportMessageProcessingFailure msg.message, msg.error
+      .then (msg) ->
+        subj.onNext msg
+        subj.onCompleted()
+      .fail (error) ->
+        unrecoverableErrors.onNext {message: msg, error: error}
+        subj.onCompleted()
+      .done()
+
+      subj
+    .subscribe recycleBin
+
+    errorProcessor
+
+  _createUnrecoverableErrorProcessor: (resycleBin) ->
+    errorProcessor = new Rx.Subject()
+
+    errorProcessor
+    .flatMap (box) =>
+      # TODO
+      console.error box.error
+
+    errorProcessor
+
+  _split: (obs, predicatePromice) ->
+    thenSubj = new Rx.Subject()
+    elseSubj = new Rx.Subject()
+    errSubj = new Rx.Subject()
+
+    nextFn = (x) ->
+      predicatePromice x
+      .then (bool) ->
+        if bool
+          thenSubj.onNext x
+        else
+          elseSubj.onNext x
+      .fail (error) ->
+        errSubj.onNext {message: x, error: error}
+      .done()
+
+    obs.subscribe(
+      nextFn,
+      ((error) -> errSubj.onNext {message: null, error: error}),
+      ( -> thenSubj.onCompleted(); elseSubj.onCompleted(); errSubj.onCompleted()),
+    )
+
+    [thenSubj, elseSubj,errSubj]
 
 stats = new Stats()
+sphereService = new SphereService stats
 messageService = new BatchMessageService()
-persistenceService = new MessagePersistenceService(stats)
+persistenceService = new MessagePersistenceService stats, sphereService
+messageProcessor = new MessageProcessor stats, messageService, persistenceService,
+  processors: [
+    (msg) -> Q("Done1")
+    (msg) -> Q("Done2")
+  ]
 
-allMessages = Rx.Observable
-.interval(500)
-.filter (tick) ->
-  not stats.applyBackpressureAtTick(tick)
-.flatMap ->
-  messageService.getMessages()
-.map (msg) ->
-  stats.incommingMessage msg
+stats.startServer(7777)
+stats.startPrinter()
 
-
-ifSplit = (obs, predicate) ->
-  thenSubj = new Rx.Subject()
-  elseSubj = new Rx.Subject()
-
-  obs.subscribe(
-    ((x) -> if (predicate(x)) then thenSubj.onNext(x) else elseSubj.onNext(x)),
-    ((error) -> console.error error.stack),
-    ( -> thenSubj.onCompleted(); elseSubj.onCompleted()),
-  )
-
-  [thenSubj, elseSubj]
-
-recycleBin = new Rx.Subject()
-
-recycleBin
-.subscribe (m) ->
-  persistenceService.releaseLocalLock m
-  stats.messageFinished m
-
-[newMessages, restMessages]  = ifSplit allMessages, (m) ->
-  persistenceService.checkAvaialbleForProcessingAndLockLocally m
-
-restMessages.subscribe recycleBin
-
-tolock = newMessages
-.do (msg) ->
-  stats.newMessage(msg)
-.flatMap (msg) ->
-  persistenceService.lockMessage msg
-
-[lockedMessages, nakedMessages]  = ifSplit tolock, (m) ->
-  m.locked is true
-
-processedMessages = lockedMessages
-.do (msg) ->
-  stats.lockedMessage msg
-.flatMap (msg) ->
-  persistenceService.orderBySequenceNumber msg, recycleBin
-.flatMap (msg) ->
-  processMessage(messageProcessors, msg)
-
-nakedMessages
-.do (msg) ->
-  stats.failedLock msg
-.subscribe recycleBin
-
-[successfulMessages, failedMessages]  = ifSplit processedMessages, (m) ->
-  _.isArray m.processingResults
-
-successfulMessages
-.flatMap (m) ->
-  persistenceService.unlockMessage m
-.do (msg) ->
-  stats.unlockedMessage msg
-.subscribe recycleBin
-
-failedMessages
-.flatMap (m) ->
-  persistenceService.reportMessageProcessingFailure m, m.processingResults
-.subscribe recycleBin
-
-initiateSelfDestructionSequence = ->
-  Rx.Observable.interval(500).subscribe ->
-    if stats.messagesInProgress() is 0
-      console.info "Graceful exit", stats.get()
-      process.exit 0
-
-statsApp = express()
-
-statsApp.get '/', (req, res) ->
-  res.json stats.get()
-
-statsApp.get '/stop', (req, res) ->
-  res.send 'Ok'
-  stats.panicMode = true
-  initiateSelfDestructionSequence()
-
-statsApp.listen 7777, ->
-  console.log "Statistics is on port 7777"
-
-Rx.Observable.interval(3000).subscribe ->
-  console.info "+-------------------------------"
-  console.info stats.get()
-  console.info "+-------------------------------"
+messageProcessor.run()

@@ -16,30 +16,55 @@ Rx = require 'rx'
 Q = require 'q'
 {_} = require 'underscore'
 express = require 'express'
+measured = require('measured')
+
+class Meter
+  constructor: (name, units) ->
+    @meters = _.map units, (unit) ->
+      {unit: unit, name: "#{name}Per#{unit.name}", meter: new measured.Meter({rateUnit: unit.rateUnit})}
+
+  mark: () ->
+    _.each @meters, (meter) ->
+      meter.meter.mark()
+
+  count: () ->
+    @meters[0].meter.toJSON().count
+
+  toJSON: () ->
+    obj = {}
+
+    _.each @meters, (meter) ->
+      obj[meter.name] = meter.meter.toJSON()
+
+    obj
 
 class Stats
-  constructor: ->
+  constructor: (options) ->
+    @units = options.units or [{name: "Second", rateUnit: 1000}, {name: "Minute", rateUnit: 60 * 1000}]
     @started = new Date()
-    @messagesIn = 0
-    @messagesOut = 0
-    @locallyLocked = 0
-    @lockedMessages = 0
-    @unlockedMessages = 0
-    @newMessages = 0
-    @lockFailedMessages = 0
     @panicMode = false
-    @processingErrors = 0
+    @locallyLocked = 0
+    @lastTick = -1
 
-  get: ->
+    @messagesIn = new Meter "messagesIn", @units
+    @messagesOut = new Meter "messagesOut", @units
+    @lockedMessages = new Meter "lockedMessages", @units
+    @unlockedMessages = new Meter "unlockedMessages", @units
+    @newMessages = new Meter "newMessages", @units
+    @lockFailedMessages = new Meter "lockFailedMessages", @units
+    @processingErrors = new Meter "processingErrors", @units
+
+  toJSON: ->
     started: @started
-    messagesIn: @messagesIn
-    messagesOut: @messagesOut
+    lastTick: @lastTick
+    messagesIn: @messagesIn.toJSON()
+    messagesOut: @messagesOut.toJSON()
     locallyLocked: @locallyLocked
-    lockedMessages: @lockedMessages
-    unlockedMessages: @unlockedMessages
-    newMessages: @newMessages
-    lockFailedMessages: @lockFailedMessages
-    processingErrors: @processingErrors
+    lockedMessages: @lockedMessages.toJSON()
+    unlockedMessages: @unlockedMessages.toJSON()
+    newMessages: @newMessages.toJSON()
+    lockFailedMessages: @lockFailedMessages.toJSON()
+    processingErrors: @processingErrors.toJSON()
     panicMode: @panicMode
 
   applyBackpressureAtTick: (tick) ->
@@ -47,42 +72,41 @@ class Stats
     @panicMode or @messagesInProgress() is not 0
 
   messagesInProgress: () ->
-    @messagesIn - @messagesOut
+    @messagesIn.count() - @messagesOut.count()
 
   incommingMessage: (msg) ->
-    @messagesIn = @messagesIn + 1
+    @messagesIn.mark()
     msg
 
   newMessage: (msg) ->
-    @newMessages = @newMessages + 1
+    @newMessages.mark()
 
   lockedMessage: (msg) ->
-    @lockedMessages = @lockedMessages + 1
+    @lockedMessages.mark()
 
   unlockedMessage: (msg) ->
-    @unlockedMessages = @unlockedMessages + 1
+    @unlockedMessages.mark()
 
   messageFinished: (msg) ->
-    @messagesOut = @messagesOut + 1
+    @messagesOut.mark()
 
   failedLock: (msg) ->
-    @lockFailedMessages = @lockFailedMessages + 1
+    @lockFailedMessages.mark()
 
   processingError: (msg) ->
-    @processingErrors = @processingErrors + 1
-
+    @processingErrors.mark()
 
   _initiateSelfDestructionSequence: ->
-    Rx.Observable.interval(500).subscribe ->
-      if stats.messagesInProgress() is 0
-        console.info "Graceful exit", stats.get()
+    Rx.Observable.interval(500).subscribe =>
+      if @messagesInProgress() is 0
+        console.info "Graceful exit", @toJSON()
         process.exit 0
 
   startServer: (port) ->
     statsApp = express()
 
     statsApp.get '/', (req, res) =>
-      res.json @get()
+      res.json @toJSON()
 
     statsApp.get '/stop', (req, res) =>
       res.send 'Ok'
@@ -95,7 +119,7 @@ class Stats
   startPrinter: () ->
     Rx.Observable.interval(3000).subscribe =>
       console.info "+-------------------------------"
-      console.info @get()
+      console.info @toJSON()
       console.info "+-------------------------------"
 
 class BatchMessageService
@@ -159,7 +183,7 @@ class MessagePersistenceService
 class MessageProcessor
   constructor: (@stats, @messageService, @persistenceService, options) ->
     @messageProcessors = options.processors # Array[Message => Promise[Something]]
-    @tickDelay = options.tickDelay or 1
+    @tickDelay = options.tickDelay or 500
 
     @recycleBin = @_createRecycleBin()
     @errors = @_createErrorProcessor(@recycleBin)
@@ -328,7 +352,7 @@ class MessageProcessor
 
     [thenSubj, elseSubj,errSubj]
 
-stats = new Stats()
+stats = new Stats {}
 sphereService = new SphereService stats
 messageService = new BatchMessageService()
 persistenceService = new MessagePersistenceService stats, sphereService

@@ -17,6 +17,7 @@ Q = require 'q'
 {_} = require 'underscore'
 express = require 'express'
 measured = require('measured')
+cache = require("lru-cache")
 
 class Meter
   constructor: (name, units) ->
@@ -44,29 +45,36 @@ class Stats
 
     @messagesIn = new Meter "messagesIn", @units
     @messagesOut = new Meter "messagesOut", @units
+    @awaitOrderingIn = new Meter "awaitOrderingIn", @units
+    @awaitOrderingOut = new Meter "awaitOrderingOut", @units
     @lockedMessages = new Meter "lockedMessages", @units
     @unlockedMessages = new Meter "unlockedMessages", @units
     @newMessages = new Meter "newMessages", @units
     @lockFailedMessages = new Meter "lockFailedMessages", @units
+    @processedSuccessfully = new Meter "processedSuccessfully", @units
     @processingErrors = new Meter "processingErrors", @units
 
-  toJSON: ->
+  toJSON: (countOnly = false)->
     started: @started
     lastTick: @lastTick
-    messagesIn: @messagesIn.toJSON()
-    messagesOut: @messagesOut.toJSON()
+    messagesIn: if countOnly then @messagesIn.count() else @messagesIn.toJSON()
+    messagesOut: if countOnly then @messagesOut.count() else @messagesOut.toJSON()
+    awaitOrderingIn: if countOnly then @awaitOrderingIn.count() else @awaitOrderingIn.toJSON()
+    awaitOrderingOut: if countOnly then @awaitOrderingOut.count() else @awaitOrderingOut.toJSON()
+    messagesInProgress: @messagesInProgress()
     locallyLocked: @locallyLocked
-    lockedMessages: @lockedMessages.toJSON()
-    unlockedMessages: @unlockedMessages.toJSON()
-    newMessages: @newMessages.toJSON()
-    lockFailedMessages: @lockFailedMessages.toJSON()
-    processingErrors: @processingErrors.toJSON()
+    lockedMessages: if countOnly then @lockedMessages.count() else @lockedMessages.toJSON()
+    unlockedMessages: if countOnly then @unlockedMessages.count() else @unlockedMessages.toJSON()
+    newMessages: if countOnly then @newMessages.count() else @newMessages.toJSON()
+    lockFailedMessages: if countOnly then @lockFailedMessages.count() else @lockFailedMessages.toJSON()
+    processingErrors: if countOnly then @processingErrors.count() else @processingErrors.toJSON()
+    processedSuccessfully: if countOnly then @processedSuccessfully.count() else @processedSuccessfully.toJSON()
     panicMode: @panicMode
     paused: @paused
 
   applyBackpressureAtTick: (tick) ->
     @lastTick = tick
-    @paused or @panicMode or @messagesInProgress() is not 0
+    @paused or @panicMode or @messagesInProgress() > 0
 
   messagesInProgress: () ->
     @messagesIn.count() - @messagesOut.count()
@@ -93,6 +101,16 @@ class Stats
   processingError: (msg) ->
     @processingErrors.mark()
 
+  yay: (msg) ->
+    @processedSuccessfully.mark()
+
+  awaitOrderingAdded: (msg) ->
+    @awaitOrderingIn.mark()
+
+  awaitOrderingRemoved: (msg) ->
+    @awaitOrderingOut.mark()
+
+
   _initiateSelfDestructionSequence: ->
     Rx.Observable.interval(500).subscribe =>
       if @messagesInProgress() is 0
@@ -104,6 +122,9 @@ class Stats
 
     statsApp.get '/', (req, res) =>
       res.json @toJSON()
+
+    statsApp.get '/count', (req, res) =>
+      res.json @toJSON(true)
 
     statsApp.get '/stop', (req, res) =>
       res.json
@@ -133,10 +154,10 @@ class Stats
     statsApp.listen port, ->
       console.log "Statistics is on port 7777"
 
-  startPrinter: () ->
+  startPrinter: (countOnly = false) ->
     Rx.Observable.interval(3000).subscribe =>
       console.info "+-------------------------------"
-      console.info @toJSON()
+      console.info @toJSON(countOnly)
       console.info "+-------------------------------"
 
 class BatchMessageService
@@ -144,15 +165,87 @@ class BatchMessageService
 
   getMessages: ->
     # TODO
-    return Rx.Observable.fromArray([{id: 1, name: "a"}, {id: 2, name: "b"}, {id: 3, name: "c"}])
+    return Rx.Observable.fromArray [
+      {id: 3, resource: {typeId: "order", id: 1}, sequenceNumber: 3, name: "b"},
+      {id: 1, resource: {typeId: "order", id: 1}, sequenceNumber: 1, name: "a"},
+      {id: 2, resource: {typeId: "order", id: 1}, sequenceNumber: 2, name: "c"}]
 
 class SphereService
   constructor: (@stats, options) ->
 
+  getLastProcessedSequenceNumber: (resource) ->
+    # TODO
+    Q(0)
+
+  reportSuccessfullProcessing: (msg) ->
+    console.info "Success: ", msg
+    # TODO
+    Q(msg)
+
+  reportMessageProcessingFailure: (msg, error, processor) ->
+    console.error msg, error.stack
+    # TODO
+    Q(msg)
+
 class MessagePersistenceService
-  constructor: (@stats, @sphere) ->
+  constructor: (@stats, @sphere, options) ->
+    @checkInterval = options.checkInterval or 2000
+    @awaitTimeout = options.awaitTimeout or 10000
+    @sequenceNumberCacheOptions = options.sequenceNumberCacheOptions or {max: 1000, maxAge: 20 * 1000}
+
     @processedMessages = []
     @localLocks = []
+    @awaitingMessages = []
+    @sequenceNumberCache = cache(@sequenceNumberCacheOptions)
+
+    @_startAwaitingMessagesChecker()
+
+  _startAwaitingMessagesChecker: () ->
+    Rx.Observable.interval @checkInterval
+    .subscribe =>
+      [outdated, stillAwaiting] = _.partition @awaitingMessages, (a) =>
+        Date.now() - a.added > @awaitTimeout
+
+      @awaitingMessages = stillAwaiting
+
+      _.each outdated, (out) =>
+        @_getLastProcessedSequenceNumber out.message
+        .then (lastProcessedSN) =>
+          @stats.awaitOrderingRemoved out.message
+
+          if out.message.sequenceNumber is (lastProcessedSN + 1)
+            out.sink.onNext out.message
+            out.sink.onCompleted()
+            out.errors.onCompleted()
+          else if out.message.sequenceNumber <= lastProcessedSN
+            @_messageHasLowSequenceNumber out.message
+            out.recycleBin.onNext out.message
+            out.sink.onCompleted()
+            out.errors.onCompleted()
+          else
+            out.recycleBin.onNext out.message
+            out.errors.onCompleted()
+            out.sink.onComplete()
+        .fail (error) =>
+          @stats.awaitOrderingRemoved out.message
+
+          out.errors.onNext {message: out.message, error: error, processor: "Get last processed sequence number"}
+          out.errors.onCompleted()
+          out.sink.onCompleted()
+        .done()
+
+  _checkAwaiting: (justProcessedMsg) ->
+    [toSink, stillAwaiting] = _.partition @awaitingMessages, (a) =>
+      @_snCacheKey(a.message.resource) is @_snCacheKey(justProcessedMsg.resource) and a.message.sequenceNumber is (justProcessedMsg.sequenceNumber + 1)
+
+    @awaitingMessages = stillAwaiting
+
+    _.each toSink, (s) =>
+      @stats.awaitOrderingRemoved s.message
+
+      s.sink.onNext s.message
+      s.sink.onCompleted()
+      s.errors.onCompleted()
 
   checkAvaialbleForProcessingAndLockLocally: (msg) ->
     @isProcessed msg
@@ -167,9 +260,6 @@ class MessagePersistenceService
   hasLocalLock: (msg) ->
     _.contains(@localLocks, msg.id)
 
-  isProcessed: (msg) ->
-    Q(_.contains(@processedMessages, msg.id))
-
   takeLocalLock: (m) ->
     @stats.locallyLocked = @stats.locallyLocked + 1
     @localLocks.push m.id
@@ -180,6 +270,10 @@ class MessagePersistenceService
 
     @localLocks = _.without @localLocks, m.id
 
+  isProcessed: (msg) ->
+    # TODO
+    Q(_.contains(@processedMessages, msg.id))
+
   lockMessage: (msg) ->
     # TODO
     Q({message: msg, lock: {}})
@@ -188,14 +282,75 @@ class MessagePersistenceService
     # TODO
     Q(msg)
 
-  orderBySequenceNumber: (msg, lock, recycleBin) ->
-    # TODO
-    Rx.Observable.return(msg)
+  reportMessageProcessingFailure: (msg, error, processor) ->
+    @sphere.reportMessageProcessingFailure msg, error, processor
 
-  reportMessageProcessingFailure: (msg, error) ->
-    console.error msg, error.stack
-    # TODO
-    Q(msg)
+  reportSuccessfullProcessing: (msg) ->
+    @sphere.reportSuccessfullProcessing msg
+    .then (msg) =>
+      # We've done it!! We processed message successfully! (let's hope we will also unlock it successfully too)
+      @stats.yay msg
+
+      alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.resource)
+
+      if not alreadyInCache? or alreadyInCache < msg.sequenceNumber
+        @sequenceNumberCache.set @_snCacheKey(msg.resource), msg.sequenceNumber
+        @_checkAwaiting msg
+
+      msg
+
+  _messageHasLowSequenceNumber: (msg) ->
+    console.info "WARN: message has appeared twice for processing (something wrong in the pipeline)", msg
+
+  orderBySequenceNumber: (msg, lock, recycleBin) ->
+    sink = new Rx.Subject()
+    errors = new Rx.Subject()
+
+    @_getLastProcessedSequenceNumber msg
+    .then (lastProcessedSN) =>
+      if msg.sequenceNumber is (lastProcessedSN + 1)
+        sink.onNext msg
+        sink.onCompleted()
+        errors.onCompleted()
+      else if msg.sequenceNumber <= lastProcessedSN
+        @_messageHasLowSequenceNumber msg
+        recycleBin.onNext msg
+        sink.onCompleted()
+        errors.onCompleted()
+      else
+        @stats.awaitOrderingAdded msg
+        @awaitingMessages.push
+          message: msg
+          sink: sink
+          errors: errors
+          recycleBin: recycleBin
+          lock: lock
+          added: Date.now()
+    .fail (error) ->
+      errors.onNext {message: msg, error: error, processor: "Get last processed sequence number"}
+      errors.onCompleted()
+      sink.onCompleted()
+    .done()
+
+    [sink, errors]
+
+  _snCacheKey: (res) ->
+    "#{res.typeId}-#{res.id}"
+
+  _getLastProcessedSequenceNumber: (msg) ->
+    cached = @sequenceNumberCache.get @_snCacheKey(msg.resource)
+
+    if cached?
+      Q(cached)
+    else
+      @sphere.getLastProcessedSequenceNumber msg.resource
+      .then (sn) =>
+        alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.resource)
+
+        if not alreadyInCache? or alreadyInCache < sn
+          @sequenceNumberCache.set @_snCacheKey(msg.resource), sn
+
+        sn
 
 class MessageProcessor
   constructor: (@stats, @messageService, @persistenceService, options) ->
@@ -217,6 +372,7 @@ class MessageProcessor
     [locked, nonLocked, errors]  = @_split messages, (box) ->
       Q(box.lock?)
 
+    # nothing can really go wrong here
     errors.subscribe @unrecoverableErrors
 
     nonLocked
@@ -230,7 +386,10 @@ class MessageProcessor
     .do (box) =>
       @stats.lockedMessage box.message
     .flatMap (box) =>
-      @persistenceService.orderBySequenceNumber box.message, box.lock, @recycleBin
+      [sink, errors] = @persistenceService.orderBySequenceNumber box.message, box.lock, @recycleBin
+
+      errors.subscribe @errors
+      sink
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
@@ -240,8 +399,21 @@ class MessageProcessor
         subj.onNext(msg)
         subj.onCompleted()
       .fail (error) =>
-        @errors.onNext {message: msg, error: error}
+        @errors.onNext {message: msg, error: error, processor: "Actual processing"}
         subj.onCompleted()
+      .done()
+
+      subj
+    .flatMap (msg) =>
+      subj = new Rx.Subject()
+
+      @persistenceService.reportSuccessfullProcessing msg
+      .then (msg) ->
+        subj.onNext(msg)
+        subj.onCompleted()
+      .fail (error) ->
+        @errors.onNext {message: msg, error: error, processor: "Reporting successful processing"}
+        subj.onComplete()
       .done()
 
       subj
@@ -253,7 +425,7 @@ class MessageProcessor
         subj.onNext(msg)
         subj.onCompleted()
       .fail (error) ->
-        @unrecoverableErrors.onNext {message: msg, error: error}
+        @errors.onNext {message: msg, error: error, processor: "Unlocking the message"}
         subj.onComplete()
       .done()
 
@@ -288,7 +460,7 @@ class MessageProcessor
         subj.onNext(maybeLocked)
         subj.onCompleted()
       .fail (error) =>
-        @unrecoverableErrors.onNext {message: msg, error: error}
+        @unrecoverableErrors.onNext {message: msg, error: error, "Locking the message"}
         subj.onCompleted()
       .done()
 
@@ -321,12 +493,12 @@ class MessageProcessor
       subj = new Rx.Subject()
 
       @stats.processingError msg
-      @persistenceService.reportMessageProcessingFailure msg.message, msg.error
+      @persistenceService.reportMessageProcessingFailure msg.message, msg.error, msg.processor
       .then (msg) ->
         subj.onNext msg
         subj.onCompleted()
       .fail (error) ->
-        unrecoverableErrors.onNext {message: msg, error: error}
+        unrecoverableErrors.onNext {message: msg, error: error, processor: "Reporting processing error"}
         subj.onCompleted()
       .done()
 
@@ -339,9 +511,10 @@ class MessageProcessor
     errorProcessor = new Rx.Subject()
 
     errorProcessor
-    .flatMap (box) =>
+    .flatMap (box) ->
       # TODO
-      console.error box.error
+      console.error "Error during: #{box.processor}"
+      console.error box.error.stack
 
     errorProcessor
 
@@ -358,21 +531,21 @@ class MessageProcessor
         else
           elseSubj.onNext x
       .fail (error) ->
-        errSubj.onNext {message: x, error: error}
+        errSubj.onNext {message: x, error: error, processor: "Split predicate"}
       .done()
 
     obs.subscribe(
       nextFn,
-      ((error) -> errSubj.onNext {message: null, error: error}),
+      ((error) -> errSubj.onNext {message: null, error: error, processor: "Split"}),
       ( -> thenSubj.onCompleted(); elseSubj.onCompleted(); errSubj.onCompleted()),
     )
 
     [thenSubj, elseSubj,errSubj]
 
 stats = new Stats {}
-sphereService = new SphereService stats
+sphereService = new SphereService stats, {}
 messageService = new BatchMessageService()
-persistenceService = new MessagePersistenceService stats, sphereService
+persistenceService = new MessagePersistenceService stats, sphereService, {}
 messageProcessor = new MessageProcessor stats, messageService, persistenceService,
   processors: [
     (msg) -> Q("Done1")
@@ -380,6 +553,6 @@ messageProcessor = new MessageProcessor stats, messageService, persistenceServic
   ]
 
 stats.startServer(7777)
-stats.startPrinter()
+stats.startPrinter(true)
 
 messageProcessor.run()

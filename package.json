@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "optimist": "0.6.0",
-    "underscore": "~1.5.2",
+    "underscore": "~1.6.0",
     "underscore.string": "2.3.3",
     "q": "~1.0.0",
     "rx": "2.2.13",

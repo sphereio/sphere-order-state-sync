@@ -215,17 +215,14 @@ class MessagePersistenceService
 
           if out.message.sequenceNumber is (lastProcessedSN + 1)
             out.sink.onNext out.message
-            out.sink.onCompleted()
-            out.errors.onCompleted()
           else if out.message.sequenceNumber <= lastProcessedSN
             @_messageHasLowSequenceNumber out.message
             out.recycleBin.onNext out.message
-            out.sink.onCompleted()
-            out.errors.onCompleted()
           else
             out.recycleBin.onNext out.message
-            out.errors.onCompleted()
-            out.sink.onComplete()
+
+          out.sink.onCompleted()
+          out.errors.onCompleted()
         .fail (error) =>
           @stats.awaitOrderingRemoved out.message
 

@@ -38,6 +38,7 @@ class Stats
     @units = options.units or [{name: "Second", rateUnit: 1000}, {name: "Minute", rateUnit: 60 * 1000}]
     @started = new Date()
     @panicMode = false
+    @paused = false
     @locallyLocked = 0
     @lastTick = -1
 
@@ -61,10 +62,11 @@ class Stats
     lockFailedMessages: @lockFailedMessages.toJSON()
     processingErrors: @processingErrors.toJSON()
     panicMode: @panicMode
+    paused: @paused
 
   applyBackpressureAtTick: (tick) ->
     @lastTick = tick
-    @panicMode or @messagesInProgress() is not 0
+    @paused or @panicMode or @messagesInProgress() is not 0
 
   messagesInProgress: () ->
     @messagesIn.count() - @messagesOut.count()
@@ -104,9 +106,29 @@ class Stats
       res.json @toJSON()
 
     statsApp.get '/stop', (req, res) =>
-      res.send 'Ok'
+      res.json
+        message: 'Self destruction sequence initiated!'
+
       @panicMode = true
       @_initiateSelfDestructionSequence()
+
+    statsApp.get '/pause', (req, res) =>
+      if @paused
+        res.json
+          message: "Already paused."
+      else
+        @paused = true
+        res.json
+          message: "Done."
+
+    statsApp.get '/resume', (req, res) =>
+      if not @paused
+        res.json
+          message: "Already running."
+      else
+        @paused = false
+        res.json
+          message: "Done."
 
     statsApp.listen port, ->
       console.log "Statistics is on port 7777"

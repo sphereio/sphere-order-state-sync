@@ -31,12 +31,7 @@ class Meter
     @meters[0].meter.toJSON().count
 
   toJSON: () ->
-    obj = {}
-
-    _.each @meters, (meter) ->
-      obj[meter.name] = meter.meter.toJSON()
-
-    obj
+    _.reduce @meters, ((acc, m) -> acc[m.name] = m.meter.toJSON(); acc), {}
 
 class Stats
   constructor: (options) ->

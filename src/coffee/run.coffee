@@ -160,25 +160,34 @@ class Stats
       console.info @toJSON(countOnly)
       console.info "+-------------------------------"
 
-class BatchMessageService
-  constructor: ->
+class SphereService
+  constructor: (@stats, options) ->
 
-  getMessages: ->
+  getSourceInfo: () ->
+    {name: "sphere"}
+
+  getMessageSource: ->
+    subject = new Rx.Subject()
+
+    observable = subject
+    .flatMap (tick) =>
+      @_loadLatestMessages()
+
+    [subject, observable]
+
+  _loadLatestMessages: () ->
     # TODO
     return Rx.Observable.fromArray [
       {id: 3, resource: {typeId: "order", id: 1}, sequenceNumber: 3, name: "b"},
       {id: 1, resource: {typeId: "order", id: 1}, sequenceNumber: 1, name: "a"},
       {id: 2, resource: {typeId: "order", id: 1}, sequenceNumber: 2, name: "c"}]
 
-class SphereService
-  constructor: (@stats, options) ->
-
   getLastProcessedSequenceNumber: (resource) ->
     # TODO
     Q(0)
 
   reportSuccessfullProcessing: (msg) ->
-    console.info "Success: ", msg
+    console.info "Success: ", msg.payload
     # TODO
     Q(msg)
 
@@ -213,9 +222,9 @@ class MessagePersistenceService
         .then (lastProcessedSN) =>
           @stats.awaitOrderingRemoved out.message
 
-          if out.message.sequenceNumber is (lastProcessedSN.sequenceNumber + 1)
+          if out.message.payload.sequenceNumber is (lastProcessedSN.sequenceNumber + 1)
             @_doSinkMessage lastProcessedSN, out
-          else if out.message.sequenceNumber <= lastProcessedSN.sequenceNumber
+          else if out.message.payload.sequenceNumber <= lastProcessedSN.sequenceNumber
             @_messageHasLowSequenceNumber out.message
             out.recycleBin.onNext out.message
             out.sink.onCompleted()
@@ -234,13 +243,25 @@ class MessagePersistenceService
 
   _checkAwaiting: (justProcessedMsg) ->
     [toSink, stillAwaiting] = _.partition @awaitingMessages, (a) =>
-      @_snCacheKey(a.message.resource) is @_snCacheKey(justProcessedMsg.resource) and a.message.sequenceNumber is (justProcessedMsg.sequenceNumber + 1)
+      @_snCacheKey(a.message.payload.resource) is @_snCacheKey(justProcessedMsg.payload.resource) and a.message.payload.sequenceNumber is (justProcessedMsg.payload.sequenceNumber + 1)
 
     @awaitingMessages = stillAwaiting
 
     _.each toSink, (s) =>
       @stats.awaitOrderingRemoved s.message
-      @_doSinkMessage {sequenceNumber: justProcessedMsg.sequenceNumber, cached: true}, s
+      @_doSinkMessage {sequenceNumber: justProcessedMsg.payload.sequenceNumber, cached: true}, s
+
+  getSourceInfo: () ->
+    @sphere.getSourceInfo()
+
+  getMessageSource: () ->
+    [observer, observable] = @sphere.getMessageSource()
+
+    newObservable = observable
+    .map (msg) =>
+      {payload: msg, persistence: this}
+
+    [observer, newObservable]
 
   checkAvaialbleForProcessingAndLockLocally: (msg) ->
     @isProcessed msg
@@ -253,21 +274,21 @@ class MessagePersistenceService
       available
 
   hasLocalLock: (msg) ->
-    _.contains(@localLocks, msg.id)
+    _.contains(@localLocks, msg.payload.id)
 
-  takeLocalLock: (m) ->
+  takeLocalLock: (msg) ->
     @stats.locallyLocked = @stats.locallyLocked + 1
-    @localLocks.push m.id
+    @localLocks.push msg.payload.id
 
-  releaseLocalLock: (m) ->
-    if @hasLocalLock(m)
+  releaseLocalLock: (msg) ->
+    if @hasLocalLock(msg)
       @stats.locallyLocked = @stats.locallyLocked - 1
 
-    @localLocks = _.without @localLocks, m.id
+    @localLocks = _.without @localLocks, msg.payload.id
 
   isProcessed: (msg) ->
     # TODO
-    Q(_.contains(@processedMessages, msg.id))
+    Q(_.contains(@processedMessages, msg.payload.id))
 
   lockMessage: (msg) ->
     # TODO
@@ -286,16 +307,16 @@ class MessagePersistenceService
       # We've done it!! We processed message successfully! (let's hope we will also unlock it successfully too)
       @stats.yay msg
 
-      alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.resource)
+      alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.payload.resource)
 
-      if not alreadyInCache? or alreadyInCache < msg.sequenceNumber
-        @sequenceNumberCache.set @_snCacheKey(msg.resource), msg.sequenceNumber
+      if not alreadyInCache? or alreadyInCache < msg.payload.sequenceNumber
+        @sequenceNumberCache.set @_snCacheKey(msg.payload.resource), msg.payload.sequenceNumber
         @_checkAwaiting msg
 
       msg
 
   _messageHasLowSequenceNumber: (msg) ->
-    console.info "WARN: message has appeared twice for processing (something wrong in the pipeline)", msg
+    console.info "WARN: message has appeared twice for processing (something wrong in the pipeline)", msg.payload
 
   _doSinkMessage: (sn, box) ->
     doSink = () ->
@@ -326,13 +347,13 @@ class MessagePersistenceService
 
     @_getLastProcessedSequenceNumber msg
     .then (lastProcessedSN) =>
-      if msg.sequenceNumber is (lastProcessedSN.sequenceNumber + 1)
+      if msg.payload.sequenceNumber is (lastProcessedSN.sequenceNumber + 1)
         @_doSinkMessage lastProcessedSN,
           message: msg
           sink: sink
           errors: errors
           recycleBin: recycleBin
-      else if msg.sequenceNumber <= lastProcessedSN.sequenceNumber
+      else if msg.payload.sequenceNumber <= lastProcessedSN.sequenceNumber
         @_messageHasLowSequenceNumber msg
         recycleBin.onNext msg
         sink.onCompleted()
@@ -358,31 +379,44 @@ class MessagePersistenceService
     "#{res.typeId}-#{res.id}"
 
   _getLastProcessedSequenceNumber: (msg) ->
-    cached = @sequenceNumberCache.get @_snCacheKey(msg.resource)
+    cached = @sequenceNumberCache.get @_snCacheKey(msg.payload.resource)
 
     if cached?
       Q({sequenceNumber: cached, cached: true})
     else
-      @sphere.getLastProcessedSequenceNumber msg.resource
+      @sphere.getLastProcessedSequenceNumber msg.payload.resource
       .then (sn) =>
-        alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.resource)
+        alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.payload.resource)
 
         if not alreadyInCache? or alreadyInCache < sn
-          @sequenceNumberCache.set @_snCacheKey(msg.resource), sn
+          @sequenceNumberCache.set @_snCacheKey(msg.payload.resource), sn
 
         {sequenceNumber: sn, cached: false}
 
 class MessageProcessor
-  constructor: (@stats, @messageService, @persistenceService, options) ->
-    @messageProcessors = options.processors # Array[Message => Promise[Something]]
-    @tickDelay = options.tickDelay or 500
+  constructor: (@stats, options) ->
+    @messageProcessors = options.processors # Array[(SourceInfo, Message) => Promise[Anything]]
+    @messageSources = options.messageSources
+    @heartbeatInterval = options.heartbeatInterval or 500
 
     @recycleBin = @_createRecycleBin()
     @errors = @_createErrorProcessor(@recycleBin)
     @unrecoverableErrors = @_createUnrecoverableErrorProcessor(@recycleBin)
 
   run: () ->
-    all = @_allMessages()
+    heartbeat = Rx.Observable.interval @heartbeatInterval
+    .filter (tick) =>
+      not @stats.applyBackpressureAtTick(tick)
+
+    messageSources = _.map @messageSources, (source) ->
+      [sourceObserver, sourceObservable] = source.getMessageSource()
+      heartbeat.subscribe sourceObserver
+      sourceObservable
+
+    all = Rx.Observable.merge messageSources
+    .map (msg) =>
+      @stats.incommingMessage msg
+
     maybeLocked = @_filterAndLockNewMessages(all)
     processed = @_doProcessMessages(maybeLocked)
 
@@ -406,14 +440,14 @@ class MessageProcessor
     .do (box) =>
       @stats.lockedMessage box.message
     .flatMap (box) =>
-      [sink, errors] = @persistenceService.orderBySequenceNumber box.message, box.lock, @recycleBin
+      [sink, errors] = box.message.persistence.orderBySequenceNumber box.message, box.lock, @recycleBin
 
       errors.subscribe @errors
       sink
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
-      @_processMessage(@messageProcessors, msg)
+      @_processMessage @messageProcessors, msg
       .then (res) ->
         msg.result = res
         subj.onNext(msg)
@@ -427,11 +461,11 @@ class MessageProcessor
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
-      @persistenceService.reportSuccessfullProcessing msg
+      msg.persistence.reportSuccessfullProcessing msg
       .then (msg) ->
         subj.onNext(msg)
         subj.onCompleted()
-      .fail (error) ->
+      .fail (error) =>
         @errors.onNext {message: msg, error: error, processor: "Reporting successful processing"}
         subj.onComplete()
       .done()
@@ -440,11 +474,11 @@ class MessageProcessor
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
-      @persistenceService.unlockMessage msg
+      msg.persistence.unlockMessage msg
       .then (msg) ->
         subj.onNext(msg)
         subj.onCompleted()
-      .fail (error) ->
+      .fail (error) =>
         @errors.onNext {message: msg, error: error, processor: "Unlocking the message"}
         subj.onComplete()
       .done()
@@ -456,15 +490,15 @@ class MessageProcessor
   _processMessage: (processors, msg) ->
     try
       promises = _.map processors, (processor) ->
-        processor msg.message
+        processor msg.persistence.getSourceInfo(), msg.payload
 
       Q.all promises
     catch error
       Q.reject(error)
 
   _filterAndLockNewMessages: (messages) ->
-    [newMessages, other, errors]  = @_split messages, (msg) =>
-      @persistenceService.checkAvaialbleForProcessingAndLockLocally msg
+    [newMessages, other, errors]  = @_split messages, (msg) ->
+      msg.persistence.checkAvaialbleForProcessingAndLockLocally msg
 
     other.subscribe @recycleBin
     errors.subscribe @unrecoverableErrors
@@ -475,7 +509,7 @@ class MessageProcessor
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
-      @persistenceService.lockMessage msg
+      msg.persistence.lockMessage msg
       .then (maybeLocked) ->
         subj.onNext(maybeLocked)
         subj.onCompleted()
@@ -486,21 +520,12 @@ class MessageProcessor
 
       subj
 
-  _allMessages: () =>
-    Rx.Observable.interval(@tickDelay)
-    .filter (tick) =>
-      not @stats.applyBackpressureAtTick(tick)
-    .flatMap =>
-      @messageService.getMessages()
-    .map (msg) =>
-      @stats.incommingMessage msg
-
   _createRecycleBin: () ->
     recycleBin = new Rx.Subject()
 
     recycleBin
     .subscribe (msg) =>
-      @persistenceService.releaseLocalLock msg
+      msg.persistence.releaseLocalLock msg
       @stats.messageFinished msg
 
     recycleBin
@@ -513,12 +538,12 @@ class MessageProcessor
       subj = new Rx.Subject()
 
       @stats.processingError msg
-      @persistenceService.reportMessageProcessingFailure msg.message, msg.error, msg.processor
+      msg.message.persistence.reportMessageProcessingFailure msg.message, msg.error, msg.processor
       .then (msg) ->
         subj.onNext msg
         subj.onCompleted()
       .fail (error) ->
-        unrecoverableErrors.onNext {message: msg, error: error, processor: "Reporting processing error"}
+        unrecoverableErrors.onNext {message: msg.message, error: error, processor: "Reporting processing error: #{msg.error.stack}"}
         subj.onCompleted()
       .done()
 
@@ -562,14 +587,17 @@ class MessageProcessor
 
     [thenSubj, elseSubj,errSubj]
 
+projects = ["test"]
+
 stats = new Stats {}
-sphereService = new SphereService stats, {}
-messageService = new BatchMessageService()
-persistenceService = new MessagePersistenceService stats, sphereService, {}
-messageProcessor = new MessageProcessor stats, messageService, persistenceService,
+messageProcessor = new MessageProcessor stats,
+  messageSources:
+    _.map projects, (prj) ->
+      sphereService = new SphereService stats, {}
+      new MessagePersistenceService stats, sphereService, {}
   processors: [
-    (msg) -> Q("Done1")
-    (msg) -> Q("Done2")
+    (sourceInfo, msg) -> Q("Done1")
+    (sourceInfo, msg) -> Q("Done2")
   ]
 
 stats.startServer(7777)

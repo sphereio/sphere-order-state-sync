@@ -34,7 +34,7 @@ class Stats
     @awaitOrderingOut = new Meter "awaitOrderingOut", @units
     @lockedMessages = new Meter "lockedMessages", @units
     @unlockedMessages = new Meter "unlockedMessages", @units
-    @newMessages = new Meter "newMessages", @units
+    @inProcessing = new Meter "inProcessing", @units
     @lockFailedMessages = new Meter "lockFailedMessages", @units
     @processedSuccessfully = new Meter "processedSuccessfully", @units
     @processingErrors = new Meter "processingErrors", @units
@@ -50,7 +50,7 @@ class Stats
     locallyLocked: @locallyLocked
     lockedMessages: if countOnly then @lockedMessages.count() else @lockedMessages.toJSON()
     unlockedMessages: if countOnly then @unlockedMessages.count() else @unlockedMessages.toJSON()
-    newMessages: if countOnly then @newMessages.count() else @newMessages.toJSON()
+    inProcessing: if countOnly then @inProcessing.count() else @inProcessing.toJSON()
     lockFailedMessages: if countOnly then @lockFailedMessages.count() else @lockFailedMessages.toJSON()
     processingErrors: if countOnly then @processingErrors.count() else @processingErrors.toJSON()
     processedSuccessfully: if countOnly then @processedSuccessfully.count() else @processedSuccessfully.toJSON()
@@ -68,8 +68,8 @@ class Stats
     @messagesIn.mark()
     msg
 
-  newMessage: (msg) ->
-    @newMessages.mark()
+  messageProcessingStatered: (msg) ->
+    @inProcessing.mark()
 
   lockedMessage: (msg) ->
     @lockedMessages.mark()

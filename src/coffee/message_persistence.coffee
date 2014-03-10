@@ -10,11 +10,13 @@ class MessagePersistenceService
     @checkInterval = options.checkInterval or 2000
     @awaitTimeout = options.awaitTimeout or 10000
     @sequenceNumberCacheOptions = options.sequenceNumberCacheOptions or {max: 1000, maxAge: 20 * 1000}
+    @processedMessagesCacheOptions = options.processedMessagesCacheOptions or {max: 3000, maxAge: 60 * 60 * 1000}
 
     @processedMessages = []
     @localLocks = []
     @awaitingMessages = []
-    @sequenceNumberCache = cache(@sequenceNumberCacheOptions)
+    @sequenceNumberCache = cache @sequenceNumberCacheOptions
+    @processedMessagesCache = cache @processedMessagesCacheOptions
 
     @_startAwaitingMessagesChecker()
 
@@ -96,24 +98,56 @@ class MessagePersistenceService
     @localLocks = _.without @localLocks, msg.payload.id
 
   isProcessed: (msg) ->
-    # TODO
-    Q(_.contains(@processedMessages, msg.payload.id))
+    Q(@processedMessagesCache.get(msg.payload.id)?)
 
   lockMessage: (msg) ->
-    msg.lock = {}
-    # TODO
-    Q(msg)
+    sink = new Rx.Subject()
+    errors = new Rx.Subject()
+    skip = new Rx.Subject()
+
+    @sphere.lockMessage msg.payload
+    .then (lock) =>
+      if lock.type is 'existing'
+        skip.onNext msg
+
+        if lock.payload.state is 'processsed'
+          @processedMessagesCache.set msg.payload.id, "Processed!"
+        else
+          @stats.failedLock msg
+      else if lock.type is 'new'
+        @stats.lockedMessage msg
+        msg.lock = lock
+        sink.onNext msg
+      else
+        errors.onNext {message: msg, error: new Error("Unsupported lock type: #{lock.type}"), processor: "Locking the message"}
+
+      errors.onCompleted()
+      sink.onCompleted()
+      skip.onCompleted()
+    .fail (error) ->
+      errors.onNext {message: msg, error: error, processor: "Locking the message"}
+      errors.onCompleted()
+      sink.onCompleted()
+      skip.onCompleted()
+    .done()
+
+    [sink, errors, skip]
 
   unlockMessage: (msg) ->
-    # TODO
-    Q(msg)
+    @sphere.unlockMessage msg.payload, msg.lock
+    .then =>
+      @stats.unlockedMessage msg
+      @processedMessagesCache.set msg.payload.id, "Processed!"
+      msg
 
   reportMessageProcessingFailure: (msg, error, processor) ->
-    @sphere.reportMessageProcessingFailure msg, error, processor
+    @sphere.reportMessageProcessingFailure msg.payload, error, processor
+    .then ->
+      msg
 
   reportSuccessfullProcessing: (msg) ->
-    @sphere.reportSuccessfullProcessing msg
-    .then (msg) =>
+    @sphere.reportSuccessfullProcessing msg.payload
+    .then =>
       # We've done it!! We processed message successfully! (let's hope we will also unlock it successfully too)
       @stats.yay msg
 

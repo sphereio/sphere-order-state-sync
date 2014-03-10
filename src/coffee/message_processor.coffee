@@ -12,8 +12,8 @@ class MessageProcessor
     @heartbeatInterval = options.heartbeatInterval or 500
 
     @recycleBin = @_createRecycleBin()
-    @errors = @_createErrorProcessor(@recycleBin)
-    @unrecoverableErrors = @_createUnrecoverableErrorProcessor(@recycleBin)
+    @errors = @_createErrorProcessor @recycleBin
+    @unrecoverableErrors = @_createUnrecoverableErrorProcessor @recycleBin
 
   run: () ->
     heartbeat = Rx.Observable.interval @heartbeatInterval
@@ -29,38 +29,34 @@ class MessageProcessor
     .map (msg) =>
       @stats.incommingMessage msg
 
-    maybeLocked = @_filterAndLockNewMessages(all)
-    processed = @_doProcessMessages(maybeLocked)
+    locked = @_filterAndLockNewMessages all
 
-    processed.subscribe @recycleBin
+    @_doProcessMessages locked
+    .subscribe @_ignoreCopleted(@recycleBin)
 
-  _doProcessMessages: (messages) ->
-    [locked, nonLocked, errors]  = @_split messages, (msg) ->
-      Q(msg.lock?)
+  _doProcessMessages: (lockedMessages) ->
+    toUnlock = new Rx.Subject()
 
-    # nothing can really go wrong here
-    errors.subscribe @unrecoverableErrors
-
-    nonLocked
+    processed = lockedMessages
     .do (msg) =>
-      @stats.failedLock msg
-    .subscribe @recycleBin
-
-    locked
-    .do (msg) =>
-      @stats.lockedMessage msg
+      @stats.messageProcessingStatered msg
     .flatMap (msg) =>
-      [sink, errors] = msg.persistence.orderBySequenceNumber msg, @recycleBin
+      [sink, errors] = msg.persistence.orderBySequenceNumber msg, toUnlock
 
-      errors.subscribe @errors
+      errors.subscribe @_ignoreCopleted(@errors)
       sink
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
       @_processMessage @messageProcessors, msg
-      .then (res) ->
-        msg.result = res
-        subj.onNext(msg)
+      .then (results) =>
+        if not _.isEmpty(_.find(results, (res) -> res.processed))
+          msg.result = _.map results, (res) -> res.processingResult
+          subj.onNext(msg)
+        else
+          # unprocessed messages are not allowed! If message should be ignored, then it should be done explicitly in processor
+          @errors.onNext {message: msg, error: new Error("No processor is defined, that can handle this message."), processor: "Actual processing"}
+
         subj.onCompleted()
       .fail (error) =>
         @errors.onNext {message: msg, error: error, processor: "Actual processing"}
@@ -81,12 +77,14 @@ class MessageProcessor
       .done()
 
       subj
+
+    Rx.Observable.merge [processed, toUnlock]
     .flatMap (msg) =>
       subj = new Rx.Subject()
 
       msg.persistence.unlockMessage msg
       .then (msg) ->
-        subj.onNext(msg)
+        subj.onNext msg
         subj.onCompleted()
       .fail (error) =>
         @errors.onNext {message: msg, error: error, processor: "Unlocking the message"}
@@ -94,8 +92,6 @@ class MessageProcessor
       .done()
 
       subj
-    .do (msg) ->
-      stats.unlockedMessage msg
 
   _processMessage: (processors, msg) ->
     try
@@ -110,35 +106,43 @@ class MessageProcessor
     [newMessages, other, errors]  = @_split messages, (msg) ->
       msg.persistence.checkAvaialbleForProcessingAndLockLocally msg
 
-    other.subscribe @recycleBin
-    errors.subscribe @unrecoverableErrors
+    other.subscribe @_ignoreCopleted(@recycleBin)
+    errors.subscribe @_ignoreCopleted(@unrecoverableErrors)
 
     newMessages
-    .do (msg) =>
-      @stats.newMessage(msg)
     .flatMap (msg) =>
-      subj = new Rx.Subject()
+      [locked, errors, toRecycle] = msg.persistence.lockMessage msg
 
-      msg.persistence.lockMessage msg
-      .then (maybeLocked) ->
-        subj.onNext(maybeLocked)
-        subj.onCompleted()
-      .fail (error) =>
-        @unrecoverableErrors.onNext {message: msg, error: error, "Locking the message"}
-        subj.onCompleted()
-      .done()
+      errors.subscribe @_ignoreCopleted(@unrecoverableErrors)
+      toRecycle.subscribe @_ignoreCopleted(@recycleBin)
 
-      subj
+      locked
+
+  _ignoreCopleted: (observer) ->
+    Rx.Observer.create(
+      (next) -> observer.onNext next,
+      (error) -> observer.onError error,
+      () ->
+    )
+
 
   _createRecycleBin: () ->
     recycleBin = new Rx.Subject()
 
-    recycleBin
-    .subscribe (msg) =>
+    nextFn = (msg) =>
       msg.persistence.releaseLocalLock msg
       @stats.messageFinished msg
+    errorFn = (error) ->
+      console.error error.stack
+    completeFn = ->
+      console.error "Recycle Bin completed! This should never happen!!"
+      console.error new Error().stack
 
     recycleBin
+    .subscribe Rx.Observer.create(nextFn, errorFn, completeFn)
+
+    recycleBin
+
 
   _createErrorProcessor: (unrecoverableErrors, recycleBin) ->
     errorProcessor = new Rx.Subject()
@@ -162,7 +166,7 @@ class MessageProcessor
 
     errorProcessor
 
-  _createUnrecoverableErrorProcessor: (resycleBin) ->
+  _createUnrecoverableErrorProcessor: (recycleBin) ->
     errorProcessor = new Rx.Subject()
 
     errorProcessor
@@ -170,6 +174,7 @@ class MessageProcessor
       # TODO
       console.error "Error during: #{box.processor}"
       console.error box.error.stack
+    .subscribe recycleBin
 
     errorProcessor
 

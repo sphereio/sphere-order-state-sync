@@ -32,7 +32,7 @@ class SphereService
     Q(0)
 
   reportSuccessfullProcessing: (msg) ->
-    console.info "Success: ", msg.payload
+    console.info "Success: ", msg
     # TODO
     Q(msg)
 
@@ -40,5 +40,14 @@ class SphereService
     console.error msg, error.stack
     # TODO
     Q(msg)
+
+  lockMessage: (msg) ->
+    # TODO
+    Q({type: "new", payload: {}})
+
+  unlockMessage: (msg, lock) ->
+    # TODO
+    Q(msg)
+
 
 exports.SphereService = SphereService

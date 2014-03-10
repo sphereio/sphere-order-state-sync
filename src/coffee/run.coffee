@@ -15,8 +15,8 @@ messageProcessor = new MessageProcessor stats,
       sphereService = new SphereService stats, {}
       new MessagePersistenceService stats, sphereService, {}
   processors: [
-    (sourceInfo, msg) -> Q("Done1")
-    (sourceInfo, msg) -> Q("Done2")
+    (sourceInfo, msg) -> Q({processed: true, processingResult: "Done from '#{sourceInfo}' msg ID #{msg.id}"})
+    (sourceInfo, msg) -> Q({processed: true, processingResult: "Done in another processor from '#{sourceInfo}' msg ID #{msg.id}"})
   ]
 
 stats.startServer(7777)

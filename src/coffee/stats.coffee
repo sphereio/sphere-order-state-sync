@@ -39,23 +39,45 @@ class Stats
     @processedSuccessfully = new Meter "processedSuccessfully", @units
     @processingErrors = new Meter "processingErrors", @units
 
-  toJSON: (countOnly = false)->
-    started: @started
-    lastTick: @lastTick
-    messagesIn: if countOnly then @messagesIn.count() else @messagesIn.toJSON()
-    messagesOut: if countOnly then @messagesOut.count() else @messagesOut.toJSON()
-    awaitOrderingIn: if countOnly then @awaitOrderingIn.count() else @awaitOrderingIn.toJSON()
-    awaitOrderingOut: if countOnly then @awaitOrderingOut.count() else @awaitOrderingOut.toJSON()
-    messagesInProgress: @messagesInProgress()
-    locallyLocked: @locallyLocked
-    lockedMessages: if countOnly then @lockedMessages.count() else @lockedMessages.toJSON()
-    unlockedMessages: if countOnly then @unlockedMessages.count() else @unlockedMessages.toJSON()
-    inProcessing: if countOnly then @inProcessing.count() else @inProcessing.toJSON()
-    lockFailedMessages: if countOnly then @lockFailedMessages.count() else @lockFailedMessages.toJSON()
-    processingErrors: if countOnly then @processingErrors.count() else @processingErrors.toJSON()
-    processedSuccessfully: if countOnly then @processedSuccessfully.count() else @processedSuccessfully.toJSON()
-    panicMode: @panicMode
-    paused: @paused
+    @customStats = []
+    @customMeters = []
+
+  toJSON: (countOnly = false) ->
+    json =
+      started: @started
+      lastTick: @lastTick
+      messagesIn: if countOnly then @messagesIn.count() else @messagesIn.toJSON()
+      messagesOut: if countOnly then @messagesOut.count() else @messagesOut.toJSON()
+      awaitOrderingIn: if countOnly then @awaitOrderingIn.count() else @awaitOrderingIn.toJSON()
+      awaitOrderingOut: if countOnly then @awaitOrderingOut.count() else @awaitOrderingOut.toJSON()
+      messagesInProgress: @messagesInProgress()
+      locallyLocked: @locallyLocked
+      lockedMessages: if countOnly then @lockedMessages.count() else @lockedMessages.toJSON()
+      unlockedMessages: if countOnly then @unlockedMessages.count() else @unlockedMessages.toJSON()
+      inProcessing: if countOnly then @inProcessing.count() else @inProcessing.toJSON()
+      lockFailedMessages: if countOnly then @lockFailedMessages.count() else @lockFailedMessages.toJSON()
+      processingErrors: if countOnly then @processingErrors.count() else @processingErrors.toJSON()
+      processedSuccessfully: if countOnly then @processedSuccessfully.count() else @processedSuccessfully.toJSON()
+      panicMode: @panicMode
+      paused: @paused
+
+
+    _.each @customStats, (stat) ->
+      json["#{stat.prefix}.#{stat.name}"] = stat.statJsonFn()
+
+    _.each @customMeters, (meterDef) ->
+      json["#{meterDef.prefix}.#{meterDef.name}"] = if countOnly then meterDef.count() else meterDef.toJSON()
+
+    json
+
+  addCustomStat: (prefix, name, statJsonFn) ->
+    @customStats.push {prefix: prefix, name: name, statJsonFn: statJsonFn}
+    this
+
+  addCustomMeter: (prefix, name) ->
+    meter = new Meter "inProcessing", @units
+    @customMeters.push {prefix: prefix, name: name, meter: meter}
+    meter
 
   applyBackpressureAtTick: (tick) ->
     @lastTick = tick

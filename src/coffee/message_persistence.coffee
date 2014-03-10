@@ -18,6 +18,11 @@ class MessagePersistenceService
     @sequenceNumberCache = cache @sequenceNumberCacheOptions
     @processedMessagesCache = cache @processedMessagesCacheOptions
 
+    @stats.addCustomStat @getSourceInfo().prefix, "sequenceNumberCacheSize", =>
+      _.size @sequenceNumberCache
+    @stats.addCustomStat @getSourceInfo().prefix, "processedMessagesCacheSize", =>
+      _.size @processedMessagesCache
+
     @_startAwaitingMessagesChecker()
 
   _startAwaitingMessagesChecker: () ->
@@ -137,7 +142,10 @@ class MessagePersistenceService
     @sphere.unlockMessage msg.payload, msg.lock
     .then =>
       @stats.unlockedMessage msg
-      @processedMessagesCache.set msg.payload.id, "Processed!"
+
+      if msg.result?
+        @processedMessagesCache.set msg.payload.id, "Processed!"
+
       msg
 
   reportMessageProcessingFailure: (msg, error, processor) ->

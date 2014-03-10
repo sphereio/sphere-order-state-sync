@@ -9,7 +9,7 @@ class SphereService
   constructor: (@stats, options) ->
 
   getSourceInfo: () ->
-    {name: "sphere"}
+    {name: "sphere", prefix: "sphere"}
 
   getMessageSource: ->
     subject = new Rx.Subject()

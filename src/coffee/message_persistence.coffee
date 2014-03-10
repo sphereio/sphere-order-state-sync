@@ -1,8 +1,6 @@
 Rx = require 'rx'
 Q = require 'q'
 {_} = require 'underscore'
-express = require 'express'
-measured = require 'measured'
 cache = require 'lru-cache'
 
 class MessagePersistenceService
@@ -22,6 +20,10 @@ class MessagePersistenceService
       _.size @sequenceNumberCache
     @stats.addCustomStat @getSourceInfo().prefix, "processedMessagesCacheSize", =>
       _.size @processedMessagesCache
+    @stats.cacheClearCommands.subscribe =>
+      @sequenceNumberCache.reset()
+      @processedMessagesCache.reset()
+
 
     @_startAwaitingMessagesChecker()
 
@@ -115,13 +117,13 @@ class MessagePersistenceService
       if lock.type is 'existing'
         skip.onNext msg
 
-        if lock.payload.state is 'processsed'
+        if lock.payload.value.state is 'processed'
           @processedMessagesCache.set msg.payload.id, "Processed!"
         else
           @stats.failedLock msg
       else if lock.type is 'new'
         @stats.lockedMessage msg
-        msg.lock = lock
+        msg.lock = lock.payload
         sink.onNext msg
       else
         errors.onNext {message: msg, error: new Error("Unsupported lock type: #{lock.type}"), processor: "Locking the message"}
@@ -142,22 +144,20 @@ class MessagePersistenceService
     @sphere.unlockMessage msg.payload, msg.lock
     .then =>
       @stats.unlockedMessage msg
-
-      if msg.result?
-        @processedMessagesCache.set msg.payload.id, "Processed!"
-
       msg
 
   reportMessageProcessingFailure: (msg, error, processor) ->
-    @sphere.reportMessageProcessingFailure msg.payload, error, processor
+    @sphere.reportMessageProcessingFailure msg.payload, msg.lock, error, processor
     .then ->
       msg
 
   reportSuccessfullProcessing: (msg) ->
-    @sphere.reportSuccessfullProcessing msg.payload
+    @sphere.reportSuccessfullProcessing msg.payload, msg.lock, msg.result
     .then =>
       # We've done it!! We processed message successfully! (let's hope we will also unlock it successfully too)
       @stats.yay msg
+
+      @processedMessagesCache.set msg.payload.id, "Processed!"
 
       alreadyInCache = @sequenceNumberCache.get @_snCacheKey(msg.payload.resource)
 
@@ -177,9 +177,9 @@ class MessagePersistenceService
       box.errors.onCompleted()
 
     if sn.cached
-      @sphere.getLastProcessedSequenceNumber box.message.resource
+      @sphere.getLastProcessedSequenceNumber box.message.payload.resource
       .then (upToDateSN) ->
-        if upToDateSN.sequenceNumber is sn.sequenceNumber
+        if upToDateSN is sn.sequenceNumber
           doSink()
         else
           # looks like already processed somewhere else

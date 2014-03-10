@@ -42,6 +42,9 @@ class Stats
     @customStats = []
     @customMeters = []
 
+    @_cacheClearCommandsObserver = new Rx.Subject()
+    @cacheClearCommands = @_cacheClearCommandsObserver
+
   toJSON: (countOnly = false) ->
     json =
       started: @started
@@ -66,7 +69,7 @@ class Stats
       json["#{stat.prefix}.#{stat.name}"] = stat.statJsonFn()
 
     _.each @customMeters, (meterDef) ->
-      json["#{meterDef.prefix}.#{meterDef.name}"] = if countOnly then meterDef.count() else meterDef.toJSON()
+      json["#{meterDef.prefix}.#{meterDef.name}"] = if countOnly then meterDef.meter.count() else meterDef.meter.toJSON()
 
     json
 
@@ -132,6 +135,11 @@ class Stats
 
     statsApp.get '/count', (req, res) =>
       res.json @toJSON(true)
+
+    statsApp.get '/clearCache', (req, res) =>
+      @_cacheClearCommandsObserver.onNext "Doit!!!!"
+      res.json
+        message: 'Cache cleared!'
 
     statsApp.get '/stop', (req, res) =>
       res.json

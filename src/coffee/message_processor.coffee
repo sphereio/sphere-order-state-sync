@@ -1,9 +1,6 @@
 Rx = require 'rx'
 Q = require 'q'
 {_} = require 'underscore'
-express = require 'express'
-measured = require 'measured'
-cache = require 'lru-cache'
 
 class MessageProcessor
   constructor: (@stats, options) ->
@@ -12,8 +9,8 @@ class MessageProcessor
     @heartbeatInterval = options.heartbeatInterval or 500
 
     @recycleBin = @_createRecycleBin()
-    @errors = @_createErrorProcessor @recycleBin
     @unrecoverableErrors = @_createUnrecoverableErrorProcessor @recycleBin
+    @errors = @_createErrorProcessor @unrecoverableErrors, @recycleBin
 
   run: () ->
     heartbeat = Rx.Observable.interval @heartbeatInterval
@@ -36,6 +33,21 @@ class MessageProcessor
 
   _doProcessMessages: (lockedMessages) ->
     toUnlock = new Rx.Subject()
+
+    unlocked = toUnlock
+    .flatMap (msg) =>
+      subj = new Rx.Subject()
+
+      msg.persistence.unlockMessage msg
+      .then (msg) ->
+        subj.onNext msg
+        subj.onCompleted()
+      .fail (error) =>
+        @errors.onNext {message: msg, error: error, processor: "Unlocking the message"}
+        subj.onCompleted()
+      .done()
+
+      subj
 
     processed = lockedMessages
     .do (msg) =>
@@ -78,20 +90,7 @@ class MessageProcessor
 
       subj
 
-    Rx.Observable.merge [processed, toUnlock]
-    .flatMap (msg) =>
-      subj = new Rx.Subject()
-
-      msg.persistence.unlockMessage msg
-      .then (msg) ->
-        subj.onNext msg
-        subj.onCompleted()
-      .fail (error) =>
-        @errors.onNext {message: msg, error: error, processor: "Unlocking the message"}
-        subj.onCompleted()
-      .done()
-
-      subj
+    Rx.Observable.merge [processed, unlocked]
 
   _processMessage: (processors, msg) ->
     try
@@ -153,8 +152,8 @@ class MessageProcessor
 
       @stats.processingError msg
       msg.message.persistence.reportMessageProcessingFailure msg.message, msg.error, msg.processor
-      .then (msg) ->
-        subj.onNext msg
+      .then ->
+        subj.onNext msg.message
         subj.onCompleted()
       .fail (error) ->
         unrecoverableErrors.onNext {message: msg.message, error: error, processor: "Reporting processing error: #{msg.error.stack}"}
@@ -170,10 +169,10 @@ class MessageProcessor
     errorProcessor = new Rx.Subject()
 
     errorProcessor
-    .flatMap (box) ->
-      # TODO
-      console.error "Error during: #{box.processor}"
+    .map (box) ->
+      console.error "Error during: #{box.processor}.", box.message.payload
       console.error box.error.stack
+      box.message
     .subscribe recycleBin
 
     errorProcessor

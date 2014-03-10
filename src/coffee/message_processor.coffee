@@ -35,24 +35,22 @@ class MessageProcessor
     processed.subscribe @recycleBin
 
   _doProcessMessages: (messages) ->
-    [locked, nonLocked, errors]  = @_split messages, (box) ->
-      Q(box.lock?)
+    [locked, nonLocked, errors]  = @_split messages, (msg) ->
+      Q(msg.lock?)
 
     # nothing can really go wrong here
     errors.subscribe @unrecoverableErrors
 
     nonLocked
-    .map (box) ->
-      box.message
     .do (msg) =>
       @stats.failedLock msg
     .subscribe @recycleBin
 
     locked
-    .do (box) =>
-      @stats.lockedMessage box.message
-    .flatMap (box) =>
-      [sink, errors] = box.message.persistence.orderBySequenceNumber box.message, box.lock, @recycleBin
+    .do (msg) =>
+      @stats.lockedMessage msg
+    .flatMap (msg) =>
+      [sink, errors] = msg.persistence.orderBySequenceNumber msg, @recycleBin
 
       errors.subscribe @errors
       sink

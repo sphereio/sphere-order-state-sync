@@ -100,8 +100,9 @@ class MessagePersistenceService
     Q(_.contains(@processedMessages, msg.payload.id))
 
   lockMessage: (msg) ->
+    msg.lock = {}
     # TODO
-    Q({message: msg, lock: {}})
+    Q(msg)
 
   unlockMessage: (msg) ->
     # TODO
@@ -150,7 +151,7 @@ class MessagePersistenceService
     else
       doSink()
 
-  orderBySequenceNumber: (msg, lock, recycleBin) ->
+  orderBySequenceNumber: (msg, recycleBin) ->
     sink = new Rx.Subject()
     errors = new Rx.Subject()
 
@@ -174,7 +175,6 @@ class MessagePersistenceService
           sink: sink
           errors: errors
           recycleBin: recycleBin
-          lock: lock
           added: Date.now()
     .fail (error) ->
       errors.onNext {message: msg, error: error, processor: "Get last processed sequence number"}

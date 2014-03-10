@@ -15,7 +15,7 @@ messageProcessor = new MessageProcessor stats,
   messageSources:
     _.map projects, (prj) ->
       sphereService = new SphereService stats,
-        processorName: "orderStateSync-#{rnd}"
+        processorName: "orderStateSync"
         connector:
           config: prj
       new MessagePersistenceService stats, sphereService, {}

@@ -45,6 +45,7 @@ processors = [
   (sourceInfo, msg) -> Q({processed: true, processingResult: "Done from '#{JSON.stringify sourceInfo}' msg ID #{msg.id}"})
   (sourceInfo, msg) -> Q({processed: true, processingResult: "Done in another processor from '#{JSON.stringify sourceInfo}' msg ID #{msg.id}"})
 ]
+
 messageProcessor = new MessageProcessor stats,
   messageSources:
     _.map sourceProjects, (project) ->

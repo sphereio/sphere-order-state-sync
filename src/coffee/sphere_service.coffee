@@ -140,11 +140,42 @@ class SphereService
   unlockMessage: (msg, lock) ->
     @_delete "/custom-objects/#{@processorName}.messages/#{msg.id}?version=#{lock.version}"
 
+  _pathWhere: (path, where) ->
+    "#{path}?where=#{encodeURIComponent(where)}"
+
+  ensureStates: (defs) ->
+    statePromises = _.map defs, (def) =>
+      @_get @_pathWhere('/states', "key=\"#{def.key}\" and type=\"LineItemState\"")
+      .then (list) =>
+        if list.total is 0
+          json =
+            key: def.key
+            type: 'LineItemState'
+            initial: false
+          @_post "/states", json
+        else
+          list.results[0]
+      .then (state) ->
+        state.definition = def
+        state
+
+    Q.all statePromises
+    .then (createdStates) =>
+      finalPromises = _.map createdStates, (state) =>
+        if not state.transitions? or _.isEmpty state.transitions
+          json =
+            version: state.version
+            actions: [{action: 'setTransitions', transitions: _.map(state.definition.transitions, (tk) -> {typeId: 'state', id: _.find(createdStates, (s) -> s.key is tk).id})}]
+          @_post "/states/#{state.id}", json
+        else
+          Q(state)
+
+      Q.all finalPromises
+
 class ErrorStatusCode extends Error
   constructor: (@code, @body) ->
     @message = "Status code is #{@code}: #{JSON.stringify @body}"
     @name = 'ErrorStatusCode'
     Error.captureStackTrace this, this
-
 
 exports.SphereService = SphereService

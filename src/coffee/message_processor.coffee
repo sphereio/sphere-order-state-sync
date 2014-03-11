@@ -29,7 +29,7 @@ class MessageProcessor
     locked = @_filterAndLockNewMessages all
 
     @_doProcessMessages locked
-    .subscribe @_ignoreCopleted(@recycleBin)
+    .subscribe @_ignoreCompleted(@recycleBin)
 
   _doProcessMessages: (lockedMessages) ->
     toUnlock = new Rx.Subject()
@@ -55,7 +55,7 @@ class MessageProcessor
     .flatMap (msg) =>
       [sink, errors] = msg.persistence.orderBySequenceNumber msg, toUnlock
 
-      errors.subscribe @_ignoreCopleted(@errors)
+      errors.subscribe @_ignoreCompleted(@errors)
       sink
     .flatMap (msg) =>
       subj = new Rx.Subject()
@@ -105,19 +105,19 @@ class MessageProcessor
     [newMessages, other, errors]  = @_split messages, (msg) ->
       msg.persistence.checkAvaialbleForProcessingAndLockLocally msg
 
-    other.subscribe @_ignoreCopleted(@recycleBin)
-    errors.subscribe @_ignoreCopleted(@unrecoverableErrors)
+    other.subscribe @_ignoreCompleted(@recycleBin)
+    errors.subscribe @_ignoreCompleted(@unrecoverableErrors)
 
     newMessages
     .flatMap (msg) =>
       [locked, errors, toRecycle] = msg.persistence.lockMessage msg
 
-      errors.subscribe @_ignoreCopleted(@unrecoverableErrors)
-      toRecycle.subscribe @_ignoreCopleted(@recycleBin)
+      errors.subscribe @_ignoreCompleted(@unrecoverableErrors)
+      toRecycle.subscribe @_ignoreCompleted(@recycleBin)
 
       locked
 
-  _ignoreCopleted: (observer) ->
+  _ignoreCompleted: (observer) ->
     Rx.Observer.create(
       (next) -> observer.onNext next,
       (error) -> observer.onError error,

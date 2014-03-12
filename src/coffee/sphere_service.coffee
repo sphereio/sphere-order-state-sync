@@ -2,12 +2,17 @@ Rx = require 'rx'
 Q = require 'q'
 {_} = require 'underscore'
 {Rest} = require('sphere-node-connect')
+util = require '../lib/util'
 
 class SphereService
   constructor: (@stats, options) ->
+    @fetchHours = options.fetchHours
+    @additionalMessageCriteria = options.additionalMessageCriteria
+    @additionalMessageExpand = options.additionalMessageExpand or []
     @processorName = options.processorName
     @projectKey = options.connector.config.project_key
     @_client = new Rest options.connector
+    @_messageFetchInProgress = false
 
     @requestMeter = @stats.addCustomMeter @projectKey, "requests"
 
@@ -56,6 +61,7 @@ class SphereService
   getSourceInfo: () ->
     {name: "sphere.#{@projectKey}", prefix: @projectKey}
 
+  # TODO: (optimization) implement pagging and remember the last error date so that amount of the messages can be reduced
   getMessageSource: ->
     subject = new Rx.Subject()
 
@@ -65,12 +71,36 @@ class SphereService
 
     [subject, observable]
 
+  getRecentMessages: (fromDate) ->
+    additional = if @additionalMessageCriteria? then " and #{@additionalMessageCriteria}" else ""
+
+    @_get @_pathWhere("/messages", "createdAt > \"#{util.formatDate fromDate}\"#{additional}", ["createdAt asc"], ["resource"].concat(@additionalMessageExpand), 0)
+    .then (res) ->
+      res.results
+
   _loadLatestMessages: () ->
-    # TODO
-    return Rx.Observable.fromArray [
-      {id: 3, resource: {typeId: "order", id: 1}, sequenceNumber: 3, name: "b"},
-      {id: 1, resource: {typeId: "order", id: 1}, sequenceNumber: 1, name: "a"},
-      {id: 2, resource: {typeId: "order", id: 1}, sequenceNumber: 2, name: "c"}]
+    if @_messageFetchInProgress
+      # if it takes too much time to get messages, then just ignore
+      Rx.Observable.fromArray []
+    else
+      subj = new Rx.Subject()
+
+      @_messageFetchInProgress = true
+
+      @getRecentMessages util.addDateTime(new Date(), -1 * @fetchHours, 0, 0)
+      .then (messages) ->
+        _.each messages, (msg) ->
+          subj.onNext msg
+        subj.onCompleted()
+      .fail (error) =>
+        console.error "Error during message fetch!"
+        console.error error.stack
+        @stats.reportMessageFetchError()
+      .finally =>
+        @_messageFetchInProgress = false
+      .done()
+
+      subj
 
   getLastProcessedSequenceNumber: (resource) ->
     @_get "/custom-objects/#{@processorName}.lastSequenceNumber/#{resource.typeId}-#{resource.id}"
@@ -99,7 +129,7 @@ class SphereService
     Q("updateLatSequenceNumber")
     .then =>
       lock.value.state = "error"
-      lock.value.stage = "processor"
+      lock.value.stage = processor
       lock.value.error = error.stack
 
       @_post "/custom-objects", lock
@@ -140,8 +170,42 @@ class SphereService
   unlockMessage: (msg, lock) ->
     @_delete "/custom-objects/#{@processorName}.messages/#{msg.id}?version=#{lock.version}"
 
-  _pathWhere: (path, where) ->
-    "#{path}?where=#{encodeURIComponent(where)}"
+  _pathWhere: (path, where, sort = [], expand = [], limit = 100) ->
+    sorting = if not _.isEmpty(sort) then "&" + _.map(sort, (s) -> "sort=" + encodeURIComponent(s)).join("&") else ""
+    expanding = if not _.isEmpty(sort) then "&" + _.map(expand, (e) -> "expand=" + encodeURIComponent(e)).join("&") else ""
+
+    "#{path}?where=#{encodeURIComponent(where)}#{sorting}#{expanding}&limit=#{limit}"
+
+  ensureChannels: (defs) ->
+    promises = _.map defs, (def) =>
+      @_get @_pathWhere('/channels', "key=\"#{def.key}\"")
+      .then (list) =>
+        if list.total is 0
+          json =
+            key: def.key
+            roles: def.roles
+          @_post "/channels", json
+        else
+          list.results[0]
+      .then (channel) ->
+        channel.definition = def
+        channel
+
+    Q.all promises
+
+  ensureTaxCategories: (defs) ->
+    promises = _.map defs, (def) =>
+      @_get @_pathWhere('/tax-categories', "name=\"#{def.name}\"")
+      .then (list) =>
+        if list.total is 0
+          @_post "/tax-categories", def
+        else
+          list.results[0]
+      .then (tc) ->
+        tc.definition = def
+        tc
+
+    Q.all promises
 
   ensureStates: (defs) ->
     statePromises = _.map defs, (def) =>
@@ -162,15 +226,45 @@ class SphereService
     Q.all statePromises
     .then (createdStates) =>
       finalPromises = _.map createdStates, (state) =>
-        if not state.transitions? or _.isEmpty state.transitions
+        if (not state.transitions? and state.definition.transitions?) or (state.transitions? and not state.definition.transitions?)
           json =
-            version: state.version
-            actions: [{action: 'setTransitions', transitions: _.map(state.definition.transitions, (tk) -> {typeId: 'state', id: _.find(createdStates, (s) -> s.key is tk).id})}]
+            if state.definition.transitions?
+              version: state.version
+              actions: [{action: 'setTransitions', transitions: _.map(state.definition.transitions, (tk) -> {typeId: 'state', id: _.find(createdStates, (s) -> s.key is tk).id})}]
+            else
+              version: state.version
+              actions: [{action: 'setTransitions'}]
+
           @_post "/states/#{state.id}", json
         else
           Q(state)
 
       Q.all finalPromises
+
+  getFirstProduct: () ->
+    @_get "/products?limit=1"
+    .then (res) ->
+      if res.total is 0
+        throw new Error("No products in the project")
+      else
+        res.results[0]
+
+  importOrder: (json) ->
+    @_post "/orders/import", json
+
+  updateOrderSyncSuatus: (order, channel, externalId) ->
+    json =
+      version: order.version
+      actions: [{action: 'updateSyncInfo', channel: {typeId: "channel", id: channel.id}, externalId: externalId}]
+
+    @_post "/orders/#{order.id}", json
+
+  transitionLineItemState: (order, lineItemId, quantity, fromState, toState) ->
+    json =
+      version: order.version
+      actions: [{action: 'transitionLineItemState', lineItemId: lineItemId, quantity: quantity, fromState: fromState, toState: toState}]
+
+    @_post "/orders/#{order.id}", json
 
 class ErrorStatusCode extends Error
   constructor: (@code, @body) ->

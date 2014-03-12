@@ -28,7 +28,7 @@
     "test": "grunt coverage"
   },
   "bin": {
-    "csv-mapper": "bin/sphere-order-status-sync.js"
+    "sphere-order-status-sync": "bin/sphere-order-status-sync.js"
   },
   "dependencies": {
     "optimist": "0.6.0",

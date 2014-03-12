@@ -21,12 +21,13 @@ class Meter
 
 class Stats
   constructor: (options) ->
+    @processor = options.processor
     @units = options.units or [{name: "Second", rateUnit: 1000}, {name: "Minute", rateUnit: 60 * 1000}]
     @started = new Date()
     @panicMode = false
     @paused = false
     @locallyLocked = 0
-    @lastTick = -1
+    @lastHeartbeat = -1
 
     @messagesIn = new Meter "messagesIn", @units
     @messagesOut = new Meter "messagesOut", @units
@@ -38,6 +39,7 @@ class Stats
     @lockFailedMessages = new Meter "lockFailedMessages", @units
     @processedSuccessfully = new Meter "processedSuccessfully", @units
     @processingErrors = new Meter "processingErrors", @units
+    @messageFetchErrors = new Meter "messageFetchErrors", @units
 
     @customStats = []
     @customMeters = []
@@ -48,7 +50,8 @@ class Stats
   toJSON: (countOnly = false) ->
     json =
       started: @started
-      lastTick: @lastTick
+      lastHeartbeat: @lastHeartbeat
+      processor: @processor
       messagesIn: if countOnly then @messagesIn.count() else @messagesIn.toJSON()
       messagesOut: if countOnly then @messagesOut.count() else @messagesOut.toJSON()
       awaitOrderingIn: if countOnly then @awaitOrderingIn.count() else @awaitOrderingIn.toJSON()
@@ -61,9 +64,9 @@ class Stats
       lockFailedMessages: if countOnly then @lockFailedMessages.count() else @lockFailedMessages.toJSON()
       processingErrors: if countOnly then @processingErrors.count() else @processingErrors.toJSON()
       processedSuccessfully: if countOnly then @processedSuccessfully.count() else @processedSuccessfully.toJSON()
+      messageFetchErrors: if countOnly then @messageFetchErrors.count() else @messageFetchErrors.toJSON()
       panicMode: @panicMode
       paused: @paused
-
 
     _.each @customStats, (stat) ->
       json["#{stat.prefix}.#{stat.name}"] = stat.statJsonFn()
@@ -83,11 +86,14 @@ class Stats
     meter
 
   applyBackpressureAtTick: (tick) ->
-    @lastTick = tick
+    @lastHeartbeat = tick
     @paused or @panicMode or @messagesInProgress() > 0
 
   messagesInProgress: () ->
     @messagesIn.count() - @messagesOut.count()
+
+  reportMessageFetchError: () ->
+    @messageFetchErrors.mark()
 
   incommingMessage: (msg) ->
     @messagesIn.mark()

@@ -6,7 +6,7 @@ class MessageProcessor
   constructor: (@stats, options) ->
     @messageProcessors = options.processors # Array[(SourceInfo, Message) => Promise[Anything]]
     @messageSources = options.messageSources
-    @heartbeatInterval = options.heartbeatInterval or 500
+    @heartbeatInterval = options.heartbeatInterval or 2000
 
     @recycleBin = @_createRecycleBin()
     @unrecoverableErrors = @_createUnrecoverableErrorProcessor @recycleBin

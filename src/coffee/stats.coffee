@@ -47,6 +47,9 @@ class Stats
     @_cacheClearCommandsObserver = new Rx.Subject()
     @cacheClearCommands = @_cacheClearCommandsObserver
 
+    @_panicModeObserver = new Rx.Subject()
+    @panicModeEvents = @_panicModeObserver
+
   toJSON: (countOnly = false) ->
     json =
       started: @started
@@ -57,6 +60,7 @@ class Stats
       awaitOrderingIn: if countOnly then @awaitOrderingIn.count() else @awaitOrderingIn.toJSON()
       awaitOrderingOut: if countOnly then @awaitOrderingOut.count() else @awaitOrderingOut.toJSON()
       messagesInProgress: @messagesInProgress()
+      messagesAwaiting: @messagesAwaiting()
       locallyLocked: @locallyLocked
       lockedMessages: if countOnly then @lockedMessages.count() else @lockedMessages.toJSON()
       unlockedMessages: if countOnly then @unlockedMessages.count() else @unlockedMessages.toJSON()
@@ -87,10 +91,13 @@ class Stats
 
   applyBackpressureAtTick: (tick) ->
     @lastHeartbeat = tick
-    @paused or @panicMode or @messagesInProgress() > 0
+    @paused or @panicMode or (@messagesInProgress() - @messagesAwaiting()) > 0
 
   messagesInProgress: () ->
     @messagesIn.count() - @messagesOut.count()
+
+  messagesAwaiting: () ->
+    @awaitOrderingIn.count() - @awaitOrderingOut.count()
 
   reportMessageFetchError: () ->
     @messageFetchErrors.mark()
@@ -152,6 +159,7 @@ class Stats
         message: 'Self destruction sequence initiated!'
 
       @panicMode = true
+      @_panicModeObserver.onNext "AAAAaaaAAAaaaa!!!!"
       @_initiateSelfDestructionSequence()
 
     statsApp.get '/pause', (req, res) =>

@@ -7,14 +7,15 @@ class MessagePersistenceService
   constructor: (@stats, @sphere, options) ->
     @checkInterval = options.checkInterval or 2000
     @awaitTimeout = options.awaitTimeout or 120000
-    @sequenceNumberCacheOptions = options.sequenceNumberCacheOptions or {max: 1000, maxAge: 20 * 1000}
-    @processedMessagesCacheOptions = options.processedMessagesCacheOptions or {max: 3000, maxAge: 60 * 60 * 1000}
+    @sequenceNumberCacheOptions = options.sequenceNumberCacheOptions or {max: 20000, maxAge: 20 * 1000}
+    @processedMessagesCacheOptions = options.processedMessagesCacheOptions or {max: 30000, maxAge: 24 * 60 * 60 * 1000}
 
     @processedMessages = []
     @localLocks = []
     @awaitingMessages = []
     @sequenceNumberCache = cache @sequenceNumberCacheOptions
     @processedMessagesCache = cache @processedMessagesCacheOptions
+    @panicMode = false
 
     @stats.addCustomStat @getSourceInfo().prefix, "sequenceNumberCacheSize", =>
       _.size @sequenceNumberCache
@@ -23,6 +24,8 @@ class MessagePersistenceService
     @stats.cacheClearCommands.subscribe =>
       @sequenceNumberCache.reset()
       @processedMessagesCache.reset()
+    @stats.panicModeEvents.subscribe =>
+      @panicMode = true
 
 
     @_startAwaitingMessagesChecker()
@@ -31,8 +34,7 @@ class MessagePersistenceService
     Rx.Observable.interval @checkInterval
     .subscribe =>
       [outdated, stillAwaiting] = _.partition @awaitingMessages, (a) =>
-        # TODO: react on panic mode to make shutdown faster!
-        Date.now() - a.added > @awaitTimeout
+        @panicMode or (Date.now() - a.added > @awaitTimeout)
 
       @awaitingMessages = stillAwaiting
 
@@ -208,6 +210,10 @@ class MessagePersistenceService
           recycleBin: recycleBin
       else if msg.payload.sequenceNumber <= lastProcessedSN.sequenceNumber
         @_messageHasLowSequenceNumber msg
+        recycleBin.onNext msg
+        sink.onCompleted()
+        errors.onCompleted()
+      else if @panicMode
         recycleBin.onNext msg
         sink.onCompleted()
         errors.onCompleted()

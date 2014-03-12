@@ -2,6 +2,7 @@ Rx = require 'rx'
 Q = require 'q'
 {_} = require 'underscore'
 cache = require 'lru-cache'
+measured = require 'measured'
 
 class MessagePersistenceService
   constructor: (@stats, @sphere, options) ->

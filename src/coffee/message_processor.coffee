@@ -109,6 +109,8 @@ class MessageProcessor
     errors.subscribe @_ignoreCompleted(@unrecoverableErrors)
 
     newMessages
+    .do (msg) =>
+      msg.stopwatch = @stats.startMessageProcessingTimer()
     .flatMap (msg) =>
       [locked, errors, toRecycle] = msg.persistence.lockMessage msg
 
@@ -129,6 +131,8 @@ class MessageProcessor
     recycleBin = new Rx.Subject()
 
     nextFn = (msg) =>
+      if msg.stopwatch?
+        msg.stopwatch.end()
       msg.persistence.releaseLocalLock msg
       @stats.messageFinished msg
     errorFn = (error) ->

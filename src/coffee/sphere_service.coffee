@@ -15,12 +15,15 @@ class SphereService
     @_messageFetchInProgress = false
 
     @requestMeter = @stats.addCustomMeter @projectKey, "requests"
+    @requestTimer = @stats.addCustomTimer @projectKey, "requestTime"
 
   _get: (path) ->
     d = Q.defer()
 
     @requestMeter.mark()
+    stopwatch = @requestTimer.start()
     @_client.GET path, (error, response, body) ->
+      stopwatch.end()
       if error
         d.reject error
       else if response.statusCode is 200
@@ -34,7 +37,9 @@ class SphereService
     d = Q.defer()
 
     @requestMeter.mark()
+    stopwatch = @requestTimer.start()
     @_client.POST path, json, (error, response, body) ->
+      stopwatch.end()
       if error
         d.reject error
       else if response.statusCode is 200 or response.statusCode is 201
@@ -48,7 +53,9 @@ class SphereService
     d = Q.defer()
 
     @requestMeter.mark()
+    stopwatch = @requestTimer.start()
     @_client.DELETE path, (error, response, body) ->
+      stopwatch.end()
       if error
         d.reject error
       else if response.statusCode is 200

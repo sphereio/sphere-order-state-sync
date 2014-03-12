@@ -2,7 +2,7 @@ Rx = require 'rx'
 Q = require 'q'
 {_} = require 'underscore'
 express = require 'express'
-measured = require('measured')
+measured = require 'measured'
 
 class Meter
   constructor: (name, units) ->
@@ -40,9 +40,11 @@ class Stats
     @processedSuccessfully = new Meter "processedSuccessfully", @units
     @processingErrors = new Meter "processingErrors", @units
     @messageFetchErrors = new Meter "messageFetchErrors", @units
+    @messageProcessingTimer = new measured.Timer()
 
     @customStats = []
     @customMeters = []
+    @customTimers = []
 
     @_cacheClearCommandsObserver = new Rx.Subject()
     @cacheClearCommands = @_cacheClearCommandsObserver
@@ -78,6 +80,12 @@ class Stats
     _.each @customMeters, (meterDef) ->
       json["#{meterDef.prefix}.#{meterDef.name}"] = if countOnly then meterDef.meter.count() else meterDef.meter.toJSON()
 
+    if not countOnly
+      json.messageProcessingTime = @messageProcessingTimer.toJSON().histogram
+
+      _.each @customTimers, (timerDef) ->
+        json["#{timerDef.prefix}.#{timerDef.name}"] = timerDef.timer.toJSON().histogram
+
     json
 
   addCustomStat: (prefix, name, statJsonFn) ->
@@ -85,9 +93,14 @@ class Stats
     this
 
   addCustomMeter: (prefix, name) ->
-    meter = new Meter "inProcessing", @units
+    meter = new Meter name, @units
     @customMeters.push {prefix: prefix, name: name, meter: meter}
     meter
+
+  addCustomTimer: (prefix, name) ->
+    timer = new measured.Timer()
+    @customTimers.push {prefix: prefix, name: name, timer: timer}
+    timer
 
   applyBackpressureAtTick: (tick) ->
     @lastHeartbeat = tick
@@ -133,6 +146,8 @@ class Stats
   awaitOrderingRemoved: (msg) ->
     @awaitOrderingOut.mark()
 
+  startMessageProcessingTimer: () ->
+    @messageProcessingTimer.start()
 
   _initiateSelfDestructionSequence: ->
     Rx.Observable.interval(500).subscribe =>

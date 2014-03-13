@@ -186,5 +186,20 @@ class  SphereTestKit
       .then (newRetailerOrder) ->
         [masterOrder, newRetailerOrder]
 
+  @run: (sphereService) ->
+    sphereTestKit = new SphereTestKit sphereService
+    sphereTestKit.setupProject()
+    .then (kit) ->
+      console.info "Done"
+
+      kit.scheduleStateTransitions()
+    #  sphereService.getRecentMessages(util.addDateTime(new Date(), -3, 0, 0))
+    .then (foo) ->
+      console.info _.size(foo)
+      console.info foo[0]
+    .fail (error) ->
+      console.error "Errror during setup"
+      console.error error.stack
+    .done()
 
 exports.SphereTestKit = SphereTestKit

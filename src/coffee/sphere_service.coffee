@@ -3,6 +3,7 @@ Q = require 'q'
 {_} = require 'underscore'
 {Rest} = require('sphere-node-connect')
 util = require '../lib/util'
+cache = require 'lru-cache'
 
 class SphereService
   constructor: (@stats, options) ->
@@ -14,8 +15,17 @@ class SphereService
     @_client = new Rest options.connector
     @_messageFetchInProgress = false
 
+    @referenceCacheOptions = options.referenceCacheOptions or {max: 1000, maxAge: 60 * 60 * 1000}
+    @referenceCache = cache @referenceCacheOptions
+
     @requestMeter = @stats.addCustomMeter @projectKey, "requests"
     @requestTimer = @stats.addCustomTimer @projectKey, "requestTime"
+
+    @stats.addCustomStat @projectKey, "referenceCacheSize", =>
+      _.size @referenceCache
+
+    @stats.cacheClearCommands.subscribe =>
+      @referenceCache.reset()
 
   _get: (path) ->
     d = Q.defer()
@@ -66,7 +76,7 @@ class SphereService
     d.promise
 
   getSourceInfo: () ->
-    {name: "sphere.#{@projectKey}", prefix: @projectKey}
+    {name: "sphere.#{@projectKey}", prefix: @projectKey, sphere: this}
 
   # TODO: (optimization) implement pagging and remember the last error date so that amount of the messages can be reduced
   getMessageSource: ->
@@ -233,7 +243,7 @@ class SphereService
     Q.all statePromises
     .then (createdStates) =>
       finalPromises = _.map createdStates, (state) =>
-        if (not state.transitions? and state.definition.transitions?) or (state.transitions? and not state.definition.transitions?)
+        if (not state.transitions? and state.definition.transitions?) or (state.transitions? and not state.definition.transitions?) or (state.transitions? and state.definition.transitions? and _.size(state.transitions) != _.size(state.definition.transitions))
           json =
             if state.definition.transitions?
               version: state.version
@@ -272,6 +282,66 @@ class SphereService
       actions: [{action: 'transitionLineItemState', lineItemId: lineItemId, quantity: quantity, fromState: fromState, toState: toState}]
 
     @_post "/orders/#{order.id}", json
+
+  _refCacheKey: (ref) ->
+    ref.typeId + "-" + ref.id
+
+  _keyCacheKey: (type, key) ->
+    'keys' + '-' + type + '-' + key
+
+  getChannelByRef: (ref) ->
+    @_getCachedRef ref, (id) =>
+      @_get "/channels/#{id}"
+
+  getChannelByKey: (key) ->
+    @_getCachedKey 'channel', key, (key) =>
+      @_get @_pathWhere("/channels", "key=\"#{key}\"")
+      .then (res) ->
+        if res.total is not 1
+          throw new Error("Channel with key: #{key} not found!")
+        else
+          res.results[0]
+
+  getStateByKey: (key, type) ->
+    @_getCachedKey 'state', type + '.' + key, (k) =>
+      @_get @_pathWhere("/states", "key=\"#{key}\" and type=\"#{type}\"")
+      .then (res) ->
+        if res.total is not 1
+          throw new Error("State with key #{key} of type #{type} not found!")
+        else
+          res.results[0]
+
+  getStateByRef: (ref) ->
+    @_getCachedRef ref, (id) =>
+      @_get "/states/#{id}"
+
+  _getCachedKey: (type, key, fetchFn) ->
+    cached = @referenceCache.get @_keyCacheKey(type, key)
+
+    if cached?
+      Q(cached)
+    else
+      fetchFn(key)
+      .then (res) =>
+        @referenceCache.set @_keyCacheKey(type, key), res
+        res
+
+  _getCachedRef: (ref, fetchFn) ->
+    cached = @referenceCache.get @_refCacheKey(ref)
+
+    if ref.obj?
+      @referenceCache.set @_refCacheKey(ref), ref.obj
+      Q(ref.obj)
+    else if cached?
+      Q(cached)
+    else
+      fetchFn(ref.id)
+      .then (res) =>
+        @referenceCache.set @_refCacheKey(ref), res
+        res
+
+  getOrderById: (id) ->
+    @_get "/orders/#{id}"
 
 class ErrorStatusCode extends Error
   constructor: (@code, @body) ->

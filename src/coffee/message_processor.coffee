@@ -126,7 +126,6 @@ class MessageProcessor
       () ->
     )
 
-
   _createRecycleBin: () ->
     recycleBin = new Rx.Subject()
 
@@ -157,6 +156,9 @@ class MessageProcessor
       @stats.processingError msg
       msg.message.persistence.reportMessageProcessingFailure msg.message, msg.error, msg.processor
       .then ->
+        console.error "Error during: #{msg.processor}. Error would be save in the custom object.", msg.message.payload
+        console.error msg.error.stack
+
         subj.onNext msg.message
         subj.onCompleted()
       .fail (error) ->

@@ -35,12 +35,13 @@ class  SphereTestKit
       Q.all orders
     .then (orders) =>
       @orders = _.map orders, (os) ->
-        [r, m] = os
+        [m, r] = os
         {retailerOrder: r, masterOrder: m}
 
       console.info "Orders"
       _.each @orders, (o, i) ->
-        console.info i, "Retailer: #{o.retailerOrder.id}, Master: #{o.masterOrder.id}",
+        console.info i, "Retailer: #{o.retailerOrder.id}, Master: #{o.masterOrder.id}"
+      console.info _.map(@orders, (o)-> "\"#{o.retailerOrder.id}\"").join(',')
       console.info "\n"
 
       console.info "Project setup finished"

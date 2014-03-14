@@ -22,6 +22,8 @@ p = MessageProcessing.builder()
     {from: 'B', to: 'D', missing: ['C']}
   ]
 
+  targetProject[0].user_agent = argv.processorName
+
   targetSphereService = new SphereService stats,
     processorName: argv.processorName
     connector:
@@ -30,7 +32,7 @@ p = MessageProcessing.builder()
   supportedMessage = (msg) ->
     msg.resource.typeId is 'order' and msg.type is 'LineItemStateTransition'
 
-  doTargetSateTransition = (targetOrder, targetLineItemId, quantity, targetFromState, targetToState) ->
+  doTargetSateTransition = (targetOrder, targetLineItemId, quantity, targetFromState, targetToState, date) ->
     missing = _.find missingTransitions, (m) ->
       m.from is targetFromState.key and m.to is targetToState.key
 
@@ -52,7 +54,7 @@ p = MessageProcessing.builder()
         Q(order)
       else
         transition = _.first ts
-        targetSphereService.transitionLineItemState order, targetLineItemId, quantity, ref(transition.from), ref(transition.to)
+        targetSphereService.transitionLineItemState order, targetLineItemId, quantity, ref(transition.from), ref(transition.to), date
         .then (resOrder) ->
           doTransition resOrder, _.tail(ts)
 
@@ -85,7 +87,7 @@ p = MessageProcessing.builder()
           to = targetSphereService.getOrderById masterSyncInfo.syncInfo.externalId
 
           Q.spread [tfp, ttp, to], (targetFromState, targetToState, targetOrder) ->
-            doTargetSateTransition targetOrder, targetOrder.lineItems[lineItemIdx].id, msg.quantity, targetFromState, targetToState
+            doTargetSateTransition targetOrder, targetOrder.lineItems[lineItemIdx].id, msg.quantity, targetFromState, targetToState, msg.transitionDate
       .then (res) ->
         Q({processed: true, processingResult: res})
 

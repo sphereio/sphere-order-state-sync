@@ -1,9 +1,7 @@
 Q = require 'q'
 {_} = require 'underscore'
 _s = require 'underscore.string'
-util = require '../lib/util'
-
-{MessageProcessing, SphereService} = require '../main'
+{util, MessageProcessing, SphereService} = require 'sphere-message-processing'
 
 p = MessageProcessing.builder()
 .optimistUsage '--targetProject [PROJECT_CREDENTIALS]'

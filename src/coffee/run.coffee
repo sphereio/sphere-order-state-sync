@@ -16,7 +16,7 @@ p = MessageProcessing.builder()
   targetProject = util.parseProjectsCredentials argv.sourceProjects
 
   if _.size(targetProject) > 1
-    throw new Error("There and be only one target project.")
+    throw new Error("Only one target project is allowed.")
 
   missingTransitions = [
     {from: 'B', to: 'D', missing: ['C']}

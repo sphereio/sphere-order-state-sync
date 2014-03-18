@@ -25,7 +25,7 @@
     "node": ">= 0.10.0"
   },
   "scripts": {
-    "test": "grunt coverage"
+    "test": "grunt test"
   },
   "bin": {
     "sphere-order-status-sync": "bin/sphere-order-status-sync.js"
@@ -36,7 +36,7 @@
     "underscore.string": "2.3.3",
     "q": "~1.0.0",
     "rx": "2.2.13",
-    "sphere-message-processing": "0.1.4"
+    "sphere-message-processing": "0.1.5"
   },
   "devDependencies": {
     "coveralls": "~2.6.1",

@@ -64,7 +64,7 @@ p = MessageProcessing.builder()
     transitions.then (ts) ->
       doTransition targetOrder, ts
       .then (resOrder) ->
-        {order: targetOrder.id, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
+        {order: resOrder.id, version: resOrder.version, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
 
   lineItemStateSynchronizer = (sourceInfo, msg) ->
     if not supportedMessage(msg)

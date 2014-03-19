@@ -25,6 +25,7 @@ p = MessageProcessing.builder()
   targetProject[0].user_agent = argv.processorName
 
   targetSphereService = new SphereService stats,
+    sphereHost: argv.sphereHost
     requestQueue: requestQueue
     statsPrefix: "target."
     processorName: argv.processorName

@@ -9,7 +9,7 @@ p = MessageProcessing.builder()
 .optimistExtras (o) ->
   o.describe('targetProject', 'Sphere.io credentials of the target project. Format: `prj-key:clientId:clientSecret`.')
   .alias('targetProject', 't')
-.messageCriteria 'type="LineItemStateTransition" and resource(typeId="order")'
+.messageCriteria 'resource(typeId="order")'
 .messageExpand ['fromState', 'toState']
 .build()
 .run (argv, stats, requestQueue) ->

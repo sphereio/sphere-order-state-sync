@@ -9,7 +9,7 @@ p = MessageProcessing.builder()
 .optimistExtras (o) ->
   o.describe('targetProject', 'Sphere.io credentials of the target project. Format: `prj-key:clientId:clientSecret`.')
   .alias('targetProject', 't')
-.messageCriteria 'type in ("DeliveryAdded", "ParcelAddedToDelivery") and resource(typeId="order")'
+.messageCriteria 'resource(typeId="order")'
 .build()
 .run (argv, stats, requestQueue) ->
   targetProject = util.parseProjectsCredentials argv.targetProject

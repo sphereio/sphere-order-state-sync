@@ -7,6 +7,8 @@ p = MessageProcessing.builder()
 .messageCriteria '(type="DeliveryAdded" or type="ReturnInfoAdded") and resource(typeId="order")'
 .build()
 .run (argv, stats, requestQueue) ->
+  throw new Error("Not Implmented yet!")
+
   processDelivery: (sourceInfo, msg) ->
     console.log "Delivery %j", msg
 

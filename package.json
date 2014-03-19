@@ -29,7 +29,8 @@
   },
   "bin": {
     "sphere-order-state-sync": "bin/sphere-order-state-sync.js",
-    "sphere-line-item-state-update": "bin/sphere-line-item-state-update.js"
+    "sphere-line-item-state-update": "bin/sphere-line-item-state-update.js",
+    "sphere-delivery-and-return-sync": "bin/sphere-delivery-and-return-sync.js"
   },
   "dependencies": {
     "optimist": "0.6.0",

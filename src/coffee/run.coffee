@@ -9,10 +9,10 @@ p = MessageProcessing.builder()
 .optimistExtras (o) ->
   o.describe('targetProject', 'Sphere.io credentials of the target project. Format: `prj-key:clientId:clientSecret`.')
   .alias('targetProject', 't')
-.messageCriteria 'resource(typeId="order")'
+.messageCriteria 'type="LineItemStateTransition" and resource(typeId="order")'
 .messageExpand ['fromState', 'toState']
 .build()
-.run (argv, stats) ->
+.run (argv, stats, requestQueue) ->
   targetProject = util.parseProjectsCredentials argv.sourceProjects
 
   if _.size(targetProject) > 1
@@ -25,6 +25,8 @@ p = MessageProcessing.builder()
   targetProject[0].user_agent = argv.processorName
 
   targetSphereService = new SphereService stats,
+    requestQueue: requestQueue
+    statsPrefix: "target."
     processorName: argv.processorName
     connector:
       config: targetProject[0]

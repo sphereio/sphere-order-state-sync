@@ -36,7 +36,7 @@
     "underscore.string": "2.3.3",
     "q": "~1.0.0",
     "rx": "2.2.13",
-    "sphere-message-processing": "0.1.5"
+    "sphere-message-processing": "0.2.0"
   },
   "devDependencies": {
     "coveralls": "~2.6.1",

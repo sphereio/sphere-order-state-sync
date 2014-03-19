@@ -13,7 +13,7 @@ p = MessageProcessing.builder()
 .messageExpand ['fromState', 'toState']
 .build()
 .run (argv, stats, requestQueue) ->
-  targetProject = util.parseProjectsCredentials argv.sourceProjects
+  targetProject = util.parseProjectsCredentials argv.targetProject
 
   if _.size(targetProject) > 1
     throw new Error("Only one target project is allowed.")

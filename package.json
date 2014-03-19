@@ -28,7 +28,8 @@
     "test": "grunt test"
   },
   "bin": {
-    "sphere-order-status-sync": "bin/sphere-order-status-sync.js"
+    "sphere-order-state-sync": "bin/sphere-order-state-sync.js",
+    "sphere-line-item-state-update": "bin/sphere-line-item-state-update.js"
   },
   "dependencies": {
     "optimist": "0.6.0",

@@ -4,6 +4,7 @@ _s = require 'underscore.string'
 {util, MessageProcessing, SphereService} = require 'sphere-message-processing'
 
 p = MessageProcessing.builder()
+.processorName "orderStateSync"
 .optimistUsage '--targetProject [PROJECT_CREDENTIALS]'
 .optimistDemand ['targetProject']
 .optimistExtras (o) ->

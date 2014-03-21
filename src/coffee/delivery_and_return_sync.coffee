@@ -12,8 +12,8 @@ p = MessageProcessing.builder()
   .alias('targetProject', 't')
 .messageCriteria 'resource(typeId="order")'
 .build()
-.run (argv, stats, requestQueue) ->
-  targetProject = util.parseProjectsCredentials argv.targetProject
+.run (argv, stats, requestQueue, cc) ->
+  targetProject = util.parseProjectsCredentials cc, argv.targetProject
 
   if _.size(targetProject) > 1
     throw new Error("Only one target project is allowed.")
@@ -94,7 +94,9 @@ p = MessageProcessing.builder()
           addDelivery msg.resource.obj, targetOrder, msg.delivery
         else if msg.type is 'ParcelAddedToDelivery'
           addParcel msg.resource.obj, targetOrder, msg.delivery, msg.parcel
+        else if msg.type is 'ReturnInfoAdded'
+          Q.reject new Error("Return info processing is not implemnted yet")
         else
-          throw new Error("Unexpected message type #{msg.type}")
+          Q.reject new Error("Unexpected message type #{msg.type}")
       .then (res) ->
         Q({processed: true, processingResult: res})

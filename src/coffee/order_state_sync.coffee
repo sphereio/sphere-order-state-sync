@@ -52,17 +52,11 @@ p = MessageProcessing.builder()
       ref = (state) ->
         {typeId: "state", id: state.id}
 
-      doTransition = (order, ts) ->
-        if _.isEmpty(ts)
-          Q(order)
-        else
-          transition = _.first ts
-          targetSphereService.transitionLineItemState order, targetLineItemId, quantity, ref(transition.from), ref(transition.to), date
-          .then (resOrder) ->
-            doTransition resOrder, _.tail(ts)
-
       transitions.then (ts) ->
-        doTransition targetOrder, ts
+        actualTransitions = _.map ts, (transition) ->
+          {quantity: quantity, fromState: ref(transition.from), toState: ref(transition.to), date: date}
+
+        targetSphereService.transitionLineItemStates targetOrder, targetLineItemId, actualTransitions
         .then (resOrder) ->
           {order: resOrder.id, version: resOrder.version, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
 

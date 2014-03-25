@@ -8,7 +8,7 @@ p = MessageProcessing.builder()
 .optimistExtras (o) ->
   o.describe('retryAttempts', 'Number of retries in case of optimistic locking conflicts.')
   .alias('retryAttempts', 10)
-.messageCriteria 'resource(typeId="order" and id in ("05c5dacd-1ed4-4dd4-b7f2-4a1ae924371d","e2996b7b-32a8-4e87-8a3d-b9cbd611e9ef","aef7338f-078a-4cb0-837d-2601492f8bbf","8633c221-08c6-42e3-9413-d8c8095ccda0","7abc5039-16d9-4c49-b47b-5075dfe9db43"))'
+.messageCriteria 'resource(typeId="order")'
 .build()
 .run (argv, stats, requestQueue) ->
   allowedAutoTransitionPaths = [
@@ -22,7 +22,7 @@ p = MessageProcessing.builder()
   processDelivery = (sourceInfo, msg) ->
 #    stateTransitionsPs = _.map msg.items, (deliveryItem) ->
 #      order = msg.resource.obj
-    Q({processed: true, processingResult: "Test"})
+    Q({processed: true, processingResult: {ignored: true}})
 
 
   processLineItemStateTransition = (sourceInfo, msg) ->
@@ -47,7 +47,7 @@ p = MessageProcessing.builder()
 #    .then (res) ->
 #        console.log "Delivery ", res
 #        {processed: true, processingResult: "WIP"}
-    Q({processed: true, processingResult: "Test"})
+    Q({processed: true, processingResult: {ignored: true}})
 
   processReturn = (sourceInfo, msg) ->
     Q.reject new Error("Return info processing is not supported yet")
@@ -62,4 +62,4 @@ p = MessageProcessing.builder()
     else if msg.resource.typeId is 'order' and msg.type is 'ReturnInfoAdded'
       processReturn sourceInfo, msg
     else
-      Q({processed: true, processingResult: "Ignored"})
+      Q({processed: true, processingResult: {ignored: true}})

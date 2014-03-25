@@ -74,7 +74,7 @@ p = MessageProcessing.builder()
 
     (sourceInfo, msg) ->
       if not supportedMessage(msg)
-        Q({processed: true, processingResult: "Not interested"})
+        Q({processed: true, processingResult: {ignored: true}})
       else
         masterSyncInfosP = _.map msg.resource.obj.syncInfo, (si) ->
           sourceInfo.sphere.getChannelByRef(si.channel)

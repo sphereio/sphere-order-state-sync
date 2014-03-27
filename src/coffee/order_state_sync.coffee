@@ -2,6 +2,7 @@ Q = require 'q'
 {_} = require 'underscore'
 _s = require 'underscore.string'
 {util, MessageProcessing, SphereService} = require 'sphere-message-processing'
+util1 = require "./util"
 
 p = MessageProcessing.builder()
 .processorName "orderStateSync"
@@ -9,6 +10,7 @@ p = MessageProcessing.builder()
 .optimistDemand ['targetProject']
 .optimistExtras (o) ->
   o.describe('targetProject', 'Sphere.io credentials of the target project. Format: `prj-key:clientId:clientSecret`.')
+  .describe('missingTransitionsConfig', 'The location of the configuration file that defines missing transitions.')
   .alias('targetProject', 't')
 .messageCriteria 'resource(typeId="order")'
 .messageExpand ['fromState', 'toState']
@@ -19,20 +21,19 @@ p = MessageProcessing.builder()
   if _.size(targetProject) > 1
     throw new Error("Only one target project is allowed.")
 
-  missingTransitions = [
-    {from: 'B', to: 'D', missing: ['C']}
-  ]
-
   targetProject[0].user_agent = argv.processorName
 
-  SphereService.create stats,
+  spherePromise = SphereService.create stats,
     sphereHost: argv.sphereHost
     requestQueue: requestQueue
     statsPrefix: "target."
     processorName: argv.processorName
     connector:
       config: targetProject[0]
-  .then (targetSphereService) ->
+
+  Q.spread [util1.loadFile(argv.transitionConfig), spherePromise], (transitionConfigText, targetSphereService) ->
+    missingTransitions = if _s.isBlank(transitionConfigText) then [] else JSON.parse(transitionConfigText)
+
     supportedMessage = (msg) ->
       msg.resource.typeId is 'order' and msg.type is 'LineItemStateTransition'
 

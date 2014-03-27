@@ -8,57 +8,86 @@ util = require "./util"
 
 p = MessageProcessing.builder()
 .processorName "lineItemStateAndStockUpdate"
-.optimistDemand ['transitionConfig']
+#.optimistDemand ['transitionConfig']
 .optimistExtras (o) ->
-  o.describe('transitionConfig', 'The location of the configuration file that defines allowed transitions.')
+  o.describe('retryAttempts', 'Number of retries in case of optimistic locking conflicts.')
+  .describe('transitionConfig', 'The location of the configuration file that defines allowed transitions.')
+  .describe('shippedStateKey', 'The key of the shipped state.')
+  .default('retryAttempts', 10)
+  .default('shippedStateKey', 'Shipped')
 .messageCriteria 'resource(typeId="order")'
 .build()
 .run (argv, stats, requestQueue) ->
   Q.spread [util.loadFile(argv.transitionConfig)], (transitionConfigText) ->
     transitionConfig = JSON.parse transitionConfigText
 
+    repeater = new Repeater {attempts: argv.retryAttempts}
+
     processDelivery = (sourceInfo, msg) ->
+      Q.reject new Error("Delivery processing is not supported yet")
+
+    processLineItemStateTransition = (sourceInfo, msg, log) ->
+      sphere = sourceInfo.sphere
       order = msg.resource.obj
 
-      stateTransitionsPs = _.map msg.items, (deliveryItem) ->
+      sphere.getStateByRef msg.toState
+      .then (state) ->
+        if state.key isnt argv.shippedStateKey
+          Q({processed: true, processingResult: {ignored: true}})
+        else
+          lineItem = _.find(order.lineItems, (li) -> li.id is msg.lineItemId)
 
-      Q({processed: true, processingResult: {ignored: true}})
+          if not lineItem?
+            Q.reject new Error("Line item with id #{msg.lineItemId} not found.")
+          else
+            sku = lineItem.variant.sku
+            supplyChannelRef = lineItem.supplyChannel
 
+            if not sku? or _s.isBlank(sku)
+              Q.reject new Error("SKU is not defined on line item with id #{msg.lineItemId}.")
+            else
+              retries = 0
 
-    processLineItemStateTransition = (sourceInfo, msg) ->
+              repeater.execute
+                recoverableError: (e) ->
+                  if e instanceof ErrorStatusCode and e.code is 409
+                    retries = retries + 1
+                    log.push "retrying #{retries}"
+                    true
+                  else
+                    false
+                task: ->
+                  log.push "getting inventory..."
 
-  #      Q.all stateTransitionsPs
-  #      .then (stateTransitionsResults) ->
-  #      if processStock
-  #        # TODO: aggregate stock updates by SKU -> quantity
-  #        stockUpdatePs = _.map msg.items, (deliveryItem) ->
-  #          repeater.execute
-  #            recoverableError: conflict
-  #            task: ->
-  #              # TODO: reduce stock for the line item SKUs
-  #              console.log "Delivery %j", msg
-  #              Q({processed: true, processingResult: "WIP"})
-  #
-  #        Q.all stockUpdatePs
-  #        .then (res) ->
-  #            {stateTransitionsResults: stateTransitionsResults, stockUpdateResults: res}
-  #      else
-  #        Q({stateTransitionsResults: stateTransitionsResults})
-  #    .then (res) ->
-  #        console.log "Delivery ", res
-  #        {processed: true, processingResult: "WIP"}
-      Q({processed: true, processingResult: {ignored: true}})
+                  sphere.getInvetoryEntryBySkuAndChannel sku, supplyChannelRef
+                  .then (inventoryEntry) ->
+                    log.push "got inventory #{inventoryEntry.id}@#{inventoryEntry.version}, available quantity: #{inventoryEntry.availableQuantity}. updating stock..."
+
+                    if inventoryEntry.availableQuantity < msg.quantity
+                      Q.reject new Error("not enough quantity in inventory entry with ID '#{inventoryEntry.id}' (available: #{inventoryEntry.availableQuantity}, needed: #{msg.quantity})")
+                    else
+                      sphere.removeInventoryQuantity inventoryEntry, msg.quantity
+                      .then (updatedInventoryEntry) ->
+                        log.push "updated inventory #{updatedInventoryEntry.id}@#{updatedInventoryEntry.version}, available quantity: #{updatedInventoryEntry.availableQuantity}."
+
+                        {processed: true, processingResult: {id: inventoryEntry.id, retries: retries, quantity: msg.quantity, oldQuantity: inventoryEntry.availableQuantity, newQuantity: updatedInventoryEntry.availableQuantity, oldVersion: inventoryEntry.version, newVersion: updatedInventoryEntry.version}}
 
     processReturn = (sourceInfo, msg) ->
       Q.reject new Error("Return info processing is not supported yet")
 
     (sourceInfo, msg) ->
-      updateStock = sourceInfo.sphere.projectProps['+stock']
+      transitionLineItemsState = sourceInfo.sphere.projectProps['transition']
+      updateStock = sourceInfo.sphere.projectProps['stock']
 
-      if msg.resource.typeId is 'order' and msg.type is 'DeliveryAdded'
+      if msg.resource.typeId is 'order' and msg.type is 'DeliveryAdded' and transitionLineItemsState
         processDelivery sourceInfo, msg
       else if msg.resource.typeId is 'order' and msg.type is 'LineItemStateTransition' and updateStock
-        processLineItemStateTransition sourceInfo, msg
+        log = []
+
+        processLineItemStateTransition sourceInfo, msg, log
+        .fail (error) ->
+          Q.reject new Error("Error during stock update. Log: #{JSON.stringify log}. Cause: #{error.stack}")
+
       else if msg.resource.typeId is 'order' and msg.type is 'ReturnInfoAdded'
         processReturn sourceInfo, msg
       else

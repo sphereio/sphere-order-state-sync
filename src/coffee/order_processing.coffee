@@ -20,7 +20,7 @@ p = MessageProcessing.builder()
   .describe('orderEmailTemplate', 'The pathe to the email template: http://underscorejs.org/#template')
   .default('retryAttempts', 10)
   .default('shippedStateKey', 'Shipped')
-.messageCriteria 'resource(typeId="order" and id in ("e240ecba-2a4e-4843-bbf9-e43bc4f6e4eb","8dfd05cf-7631-4edb-a27b-2b1bfb41f4a9","434c6e63-3af7-4a6d-93fa-7216ad52624a","3f6671bb-5d48-4fed-b9db-38687c002d05","d8593455-2fda-4683-a8d2-de879dbd9322"))'
+.messageCriteria 'resource(typeId="order")'
 .build()
 .run (argv, stats, requestQueue) ->
   Q.spread [util.loadFile(argv.transitionConfig), util.loadFile(argv.smtpConfig), util.loadFile(argv.orderEmailTemplate)], (transitionConfigText, smtpConfig, orderEmailTemplateText) ->

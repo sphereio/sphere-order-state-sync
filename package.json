@@ -29,7 +29,7 @@
   },
   "bin": {
     "sphere-order-state-sync": "bin/sphere-order-state-sync.js",
-    "sphere-line-item-state-update": "bin/sphere-line-item-state-update.js",
+    "sphere-order-processing": "bin/sphere-order-processing.js",
     "sphere-delivery-and-return-sync": "bin/sphere-delivery-and-return-sync.js"
   },
   "dependencies": {
@@ -39,7 +39,8 @@
     "q": "~1.0.0",
     "q-io": "~1.10.9",
     "rx": "2.2.13",
-    "sphere-message-processing": "0.3.9"
+    "sphere-message-processing": "0.3.10",
+    "nodemailer": "0.6.1"
   },
   "devDependencies": {
     "coveralls": "~2.6.1",

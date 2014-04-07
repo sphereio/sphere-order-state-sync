@@ -7,7 +7,7 @@ _s = require 'underscore.string'
 util = require "./util"
 nodemailer = require "nodemailer"
 
-p = MessageProcessing.builder()
+module.exports = MessageProcessing.builder()
 .processorName "lineItemStateAndStockUpdate"
 .optimistDemand ['smtpConfig', "emailFrom", "orderEmailSubject", "orderEmailTemplate"]
 .optimistExtras (o) ->
@@ -21,8 +21,7 @@ p = MessageProcessing.builder()
   .default('retryAttempts', 10)
   .default('shippedStateKey', 'Shipped')
 .messageCriteria 'resource(typeId="order")'
-.build()
-.run (argv, stats, requestQueue) ->
+.build (argv, stats, requestQueue) ->
   Q.spread [util.loadFile(argv.transitionConfig), util.loadFile(argv.smtpConfig), util.loadFile(argv.orderEmailTemplate)], (transitionConfigText, smtpConfig, orderEmailTemplateText) ->
     transitionConfig = if transitionConfigText? and not _s.isBlank(transitionConfigText) then JSON.parse transitionConfigText else []
 
@@ -48,7 +47,7 @@ p = MessageProcessing.builder()
         cfgs
 
     processDelivery = (sourceInfo, msg, log) ->
-      #FIXME: inplement this stuff
+      # FIXME: implement this stuff
       return Q.reject new Error("LineItem state transition on delivery is not supported yet!")
 
       sphere = sourceInfo.sphere

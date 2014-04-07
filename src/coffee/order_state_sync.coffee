@@ -4,7 +4,7 @@ _s = require 'underscore.string'
 {util, MessageProcessing, SphereService} = require 'sphere-message-processing'
 util1 = require "./util"
 
-p = MessageProcessing.builder()
+module.exports = MessageProcessing.builder()
 .processorName "orderStateSync"
 .optimistUsage '--targetProject [PROJECT_CREDENTIALS]'
 .optimistDemand ['targetProject']
@@ -12,10 +12,9 @@ p = MessageProcessing.builder()
   o.describe('targetProject', 'Sphere.io credentials of the target project. Format: `prj-key:clientId:clientSecret`.')
   .describe('missingTransitionsConfig', 'The location of the configuration file that defines missing transitions.')
   .alias('targetProject', 't')
-.messageCriteria 'resource(typeId="order")'
+.messageType 'order'
 .messageExpand ['fromState', 'toState']
-.build()
-.run (argv, stats, requestQueue, cc) ->
+.build (argv, stats, requestQueue, cc) ->
   targetProject = util.parseProjectsCredentials cc, argv.targetProject
 
   if _.size(targetProject) > 1

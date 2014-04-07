@@ -1,3 +1,3 @@
 #!/usr/bin/env node
 
-require('../lib/order_state_sync.js')
+require('../lib/order_state_sync.js')().start()

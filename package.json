@@ -25,7 +25,7 @@
     "node": ">= 0.10.0"
   },
   "scripts": {
-    "test": "grunt test"
+    "test": "grunt coverage"
   },
   "bin": {
     "sphere-order-state-sync": "bin/sphere-order-state-sync.js",

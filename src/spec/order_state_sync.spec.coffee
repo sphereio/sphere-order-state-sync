@@ -6,8 +6,6 @@ Q = require 'q'
 OrderStateSync = require '../lib/order_state_sync'
 {config} = require '../config'
 
-jasmine.getEnv().defaultTimeoutInterval = 30000
-
 describe 'Order State Sync', ->
   statsOptions = () ->
     eventSubject: new Rx.ReplaySubject()
@@ -75,3 +73,4 @@ describe 'Order State Sync', ->
     .fail (error) ->
       SphereTestKit.reportFailure done, error, null, processor
     .done()
+  , 30000

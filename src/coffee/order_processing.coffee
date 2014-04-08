@@ -20,7 +20,7 @@ module.exports = MessageProcessing.builder()
   .describe('orderEmailTemplate', 'The pathe to the email template: http://underscorejs.org/#template')
   .default('retryAttempts', 10)
   .default('shippedStateKey', 'Shipped')
-.messageCriteria 'resource(typeId="order")'
+.messageType 'order'
 .build (argv, stats, requestQueue) ->
   Q.spread [util.loadFile(argv.transitionConfig), util.loadFile(argv.smtpConfig), util.loadFile(argv.orderEmailTemplate)], (transitionConfigText, smtpConfig, orderEmailTemplateText) ->
     transitionConfig = if transitionConfigText? and not _s.isBlank(transitionConfigText) then JSON.parse transitionConfigText else []

@@ -78,7 +78,7 @@ module.exports = (grunt)->
         stderr: true
         failOnError: true
       coverage:
-        command: 'istanbul cover jasmine-node --captureExceptions test && cat ./coverage/lcov.info | ./node_modules/coveralls/bin/coveralls.js && rm -rf ./coverage'
+        command: 'istanbul cover jasmine-node --forceexit --captureExceptions test && cat ./coverage/lcov.info | ./node_modules/coveralls/bin/coveralls.js && rm -rf ./coverage'
       jasmine:
         # --forceexit is "solution" when jasmine fails to terminate correctly if async specs are involved:
         # http://stackoverflow.com/questions/20440196/jasmine-node-causing-jenkins-to-hang-after-completion

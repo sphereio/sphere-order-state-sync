@@ -16,9 +16,8 @@ notifications:
     format: html
     on_success: change
     on_failure: change
-SPHERE_PROJECT_KEY:
-  secure: iFuLciSgmIP4nglIT4xCXdRHC/vETDn3c2M9dmZYU/WQtawI3OSUXa6pTfHh65WFbLS1YlA+PbCsbHS+bWKnbvpbLoJEkqRgeLgmStg8feUtVc5bCzBIN7jZhNtiH1j/hWQYKq2tY3aJ0eKHJCH+ohv1wpC6rmd2dMLc0tMwc20=
-SPHERE_CLIENT_ID:
-  secure: Gqrv80Z+X/BrM0zTN8hRMAdKn0zDDZ04kYdbL2RVIiOn8NZSrvPYtRo8PurPCuimHViziSxStlG4IwhiDjvpzgAxnQkIuZHwhTGXZDwRllCIvJiIo/hqfpssikNuTgaEt5TUVBYXxSe+iqhP6lgT5GUxWmwT+Vj2Qhap/qSzUJs=
-SPHERE_CLIENT_SECRET:
-  secure: elHz9GSododbbVprRa452t72qvnBZTdltnTzRAMRNhiMm4vU7S0Eq+gattR6aUdjGfr5ynDZ3yucCGkvT8s4xPLBoiXIc3jlodVcNFwgsjlnzMc5Y/u6bwmqqhrVJRCfhIslTwZZazKd+m+qdgmwbOSEENy2uChmYncJYvXCVNU=
+env:
+  global:
+  - secure: bfoT5+hm/oBk56mTxtkZfdiUQuif95ArhF3TVRPty/lv8vdeGpqJRrNwnMYhnVideG7Lbhl/JfaXwO2k7TGtt49L9PWieSOGNDhkxVYxrwBUpuktBOVLmMHsqo67ThWuo6EX6DJmDx3rmh/BYKiTOetL8ZluUDGrRL8VWAF2xPM=
+  - secure: Z0KPvjJ3N7qP6bih7KN1BEojxnRMvk8F4F4mm3AVuv+pNuI+2kP6meFvbubkipzkCUKjdQov++lDWX5yyHb8BIuUFtBXsUCMaS6Y+Q3AGOoJojdOkCf2tma+KgrpLB7WrszIXHSW+5cDNtFayV7y4UGaXe1ZBEhPDzUPSjUwmNQ=
+  - secure: ZmDPY+p0l46Tz2wV2fP1uDyKwsmSNs8tZb8y+0NY4zFvqCGRhmIL1MlE3/nYbmKGDXuov7zEtec9be+9+DTVZXYzWp2NIVBKlVtceShk5V7aGORWk3wrZRgxSR7wOGGx61vRLE1d/Pas8Ikf0wyu9fzRaoj8UQuZKRN4P24tJiE=

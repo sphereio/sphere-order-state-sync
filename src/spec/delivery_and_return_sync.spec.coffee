@@ -3,10 +3,10 @@ Q = require 'q'
 {_} = require 'underscore'
 {SphereTestKit, SphereService} = require 'sphere-message-processing'
 
-OrderStateSync = require '../lib/order_state_sync'
+DeliverySync = require '../lib/delivery_and_return_sync'
 {config} = require '../config'
 
-describe 'Order State Sync', ->
+describe 'Delivery and Return Sync', ->
   statsOptions = () ->
     eventSubject: new Rx.ReplaySubject()
     offline: true
@@ -25,22 +25,20 @@ describe 'Order State Sync', ->
     .then (sphere) ->
       SphereTestKit.setupProject sphere
 
-  verifyMasterProjectOrdersInState = (kit, stateKey, quantity) ->
+  verifyMasterProjectOrdersParcels = (kit, trackingId, carrier) ->
     Q.all _.map(kit.orders, (o) -> kit.sphere.getOrderById(o.masterOrder.id))
     .then (masterOrders) ->
-      kit.sphere.getStateByKey stateKey, 'LineItemState'
-      .then (state) ->
-        [masterOrders, state]
-    .then ([masterOrders, state]) ->
-      ps = _.map masterOrders, (masterOrder) ->
-        found = _.find masterOrder.lineItems[0].state, (s) -> s.state.id is state.id and s.quantity is quantity
+      _.map masterOrders, (masterOrder) ->
+        expect(_.size(masterOrder.shippingInfo.deliveries)).toEqual 1
+        expect(_.size(masterOrder.shippingInfo.deliveries[0].parcels)).toEqual 1
 
-        if found then Q() else Q.reject("Order #{masterOrder.id} has line items in the wrong state!")
+        parcel = masterOrder.shippingInfo.deliveries[0].parcels[0]
 
-      Q.all ps
+        expect(parcel.trackingData.trackingId).toEqual trackingId
+        expect(parcel.trackingData.carrier).toEqual carrier
 
-  it 'should replicate line item state transitions from retailer projects to one target master project', (done) ->
-    processor = OrderStateSync().init statsOptions(),
+  it 'should synchronize all deliveries and parcels to the target master project', (done) ->
+    processor = DeliverySync().init statsOptions(),
       sourceProjects: testProject
       targetProject: testProject
       heartbeatInterval: 500
@@ -48,8 +46,7 @@ describe 'Order State Sync', ->
 
     setupTestProject processor.stats, processor.requestQueue
     .then (kit) ->
-      _.reduce _.range(0, 6), ((p, c) -> (p.then -> kit.transitionRetailerOrderStates("A", kit.abcStateSwitch))), Q()
-      .then -> kit
+      kit.addSomeDeliveries().then -> kit
     .then (kit) ->
       d = Q.defer()
 
@@ -60,9 +57,9 @@ describe 'Order State Sync', ->
         if stats.processingErrors > 0
           subscription.dispose()
           d.reject "Messages processing failed"
-        else if stats['LineItemStateTransition.processed'] is 30
+        else if stats['DeliveryAdded.processed'] is 5 and stats['ParcelAddedToDelivery.processed'] is 5
           subscription.dispose()
-          verifyMasterProjectOrdersInState kit, 'B', 20
+          verifyMasterProjectOrdersParcels kit, "ABCD123", "DHL"
           .then -> d.resolve()
           .fail (error) -> d.reject error
           .done()

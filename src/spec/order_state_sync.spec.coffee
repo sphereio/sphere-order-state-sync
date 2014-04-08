@@ -73,4 +73,4 @@ describe 'Order State Sync', ->
     .fail (error) ->
       SphereTestKit.reportFailure done, error, null, processor
     .done()
-  , 30000
+  , 60000

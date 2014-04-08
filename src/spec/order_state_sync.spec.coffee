@@ -41,7 +41,7 @@ describe 'Order State Sync', ->
 
       Q.all ps
 
-  it 'should replicate line item state trantions from retailer projects to one target master project', (done) ->
+  it 'should replicate line item state transitions from retailer projects to one target master project', (done) ->
     processor = OrderStateSync().init statsOptions(),
       sourceProjects: testProject
       targetProject: testProject

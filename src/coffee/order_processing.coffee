@@ -77,24 +77,35 @@ module.exports = MessageProcessing.builder()
     processOrderImport = (sourceInfo, msg) ->
       res = Q.defer()
       emails = sourceInfo.sphere.projectProps['email']
+      bccEmails = sourceInfo.sphere.projectProps['bcc-email']
 
       if not emails? or (_.isString(emails) and _s.isBlank(emails))
         emails = []
       else if _.isString(emails)
         emails = [emails]
 
+      if not bccEmails? or (_.isString(bccEmails) and _s.isBlank(bccEmails))
+        bccEmails = []
+      else if _.isString(bccEmails)
+        bccEmails = [bccEmails]
+
       if not _.isEmpty(emails)
         mail =
           from: argv.smtpFrom
-          to: emails.join(", ")
           subject: argv.orderEmailSubject.replace(/\%orderNumber\%/, msg.order.orderNumber or msg.order.id)
           text: orderEmailTemplate({order: msg.order})
+
+        if not _.isEmpty(emails)
+          mail.to = emails.join(", ")
+
+        if not _.isEmpty(bccEmails)
+          mail.bcc = bccEmails.join(", ")
 
         smtp.sendMail mail, (error, resp) ->
           if error
             res.reject error
           else
-            res.resolve {processed: true, processingResult: {emails: emails}}
+            res.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
       else
         res.resolve {processed: true, processingResult: {ignored: true, reason: "no TO"}}
 

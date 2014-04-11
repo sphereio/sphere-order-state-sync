@@ -7,7 +7,7 @@ _s = require 'underscore.string'
 util = require "./util"
 nodemailer = require "nodemailer"
 
-p = MessageProcessing.builder()
+module.exports = MessageProcessing.builder()
 .processorName "lineItemStateAndStockUpdate"
 .optimistDemand ['smtpConfig', "emailFrom", "orderEmailSubject", "orderEmailTemplate"]
 .optimistExtras (o) ->
@@ -20,9 +20,8 @@ p = MessageProcessing.builder()
   .describe('orderEmailTemplate', 'The pathe to the email template: http://underscorejs.org/#template')
   .default('retryAttempts', 10)
   .default('shippedStateKey', 'Shipped')
-.messageCriteria 'resource(typeId="order")'
-.build()
-.run (argv, stats, requestQueue) ->
+.messageType 'order'
+.build (argv, stats, requestQueue) ->
   Q.spread [util.loadFile(argv.transitionConfig), util.loadFile(argv.smtpConfig), util.loadFile(argv.orderEmailTemplate)], (transitionConfigText, smtpConfig, orderEmailTemplateText) ->
     transitionConfig = if transitionConfigText? and not _s.isBlank(transitionConfigText) then JSON.parse transitionConfigText else []
 
@@ -48,7 +47,7 @@ p = MessageProcessing.builder()
         cfgs
 
     processDelivery = (sourceInfo, msg, log) ->
-      #FIXME: inplement this stuff
+      # FIXME: implement this stuff
       return Q.reject new Error("LineItem state transition on delivery is not supported yet!")
 
       sphere = sourceInfo.sphere
@@ -78,24 +77,35 @@ p = MessageProcessing.builder()
     processOrderImport = (sourceInfo, msg) ->
       res = Q.defer()
       emails = sourceInfo.sphere.projectProps['email']
+      bccEmails = sourceInfo.sphere.projectProps['bcc-email']
 
       if not emails? or (_.isString(emails) and _s.isBlank(emails))
         emails = []
       else if _.isString(emails)
         emails = [emails]
 
+      if not bccEmails? or (_.isString(bccEmails) and _s.isBlank(bccEmails))
+        bccEmails = []
+      else if _.isString(bccEmails)
+        bccEmails = [bccEmails]
+
       if not _.isEmpty(emails)
         mail =
           from: argv.smtpFrom
-          to: emails.join(", ")
           subject: argv.orderEmailSubject.replace(/\%orderNumber\%/, msg.order.orderNumber or msg.order.id)
           text: orderEmailTemplate({order: msg.order})
+
+        if not _.isEmpty(emails)
+          mail.to = emails.join(", ")
+
+        if not _.isEmpty(bccEmails)
+          mail.bcc = bccEmails.join(", ")
 
         smtp.sendMail mail, (error, resp) ->
           if error
             res.reject error
           else
-            res.resolve {processed: true, processingResult: {emails: emails}}
+            res.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
       else
         res.resolve {processed: true, processingResult: {ignored: true, reason: "no TO"}}
 

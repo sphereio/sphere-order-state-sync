@@ -1,20 +1,23 @@
 language: node_js
 node_js:
-  - '0.10'
+- '0.10'
 before_script:
 - npm install -g grunt-cli
+- ./create_config.sh
 script:
 - npm test
 notifications:
   hipchat:
     rooms:
-      secure:
+      secure: XGXK3s/LCBpxkmwg5z4noeF7wLimz5UQocXhlO2Dpzm/jGpAF4NJ1yK9bSv19WJBF9U6NFK47iRqfIXArFLFeVcDwGMkL1bQ/PeieF5cCQc8YO6kCUFy2Ha69wbBwtL6TfU52DSqd4rnOuTAeu+WVIgE/FaW8hSzk2X4KL0Bqkk=
     template:
     - ! '%{repository}#%{build_number} (%{author}): %{message} (<a href="%{build_url}">Details</a>/<a
       href="%{compare_url}">Compare</a>)'
     format: html
     on_success: change
     on_failure: change
-SPHERE_PROJECT_KEY:
-SPHERE_CLIENT_ID:
-SPHERE_CLIENT_SECRET:
+env:
+  global:
+  - secure: bfoT5+hm/oBk56mTxtkZfdiUQuif95ArhF3TVRPty/lv8vdeGpqJRrNwnMYhnVideG7Lbhl/JfaXwO2k7TGtt49L9PWieSOGNDhkxVYxrwBUpuktBOVLmMHsqo67ThWuo6EX6DJmDx3rmh/BYKiTOetL8ZluUDGrRL8VWAF2xPM=
+  - secure: Z0KPvjJ3N7qP6bih7KN1BEojxnRMvk8F4F4mm3AVuv+pNuI+2kP6meFvbubkipzkCUKjdQov++lDWX5yyHb8BIuUFtBXsUCMaS6Y+Q3AGOoJojdOkCf2tma+KgrpLB7WrszIXHSW+5cDNtFayV7y4UGaXe1ZBEhPDzUPSjUwmNQ=
+  - secure: ZmDPY+p0l46Tz2wV2fP1uDyKwsmSNs8tZb8y+0NY4zFvqCGRhmIL1MlE3/nYbmKGDXuov7zEtec9be+9+DTVZXYzWp2NIVBKlVtceShk5V7aGORWk3wrZRgxSR7wOGGx61vRLE1d/Pas8Ikf0wyu9fzRaoj8UQuZKRN4P24tJiE=

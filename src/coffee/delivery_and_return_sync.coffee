@@ -3,16 +3,15 @@ Q = require 'q'
 _s = require 'underscore.string'
 {util, MessageProcessing, SphereService} = require 'sphere-message-processing'
 
-p = MessageProcessing.builder()
+module.exports = MessageProcessing.builder()
 .processorName "deliverySync"
 .optimistUsage '--targetProject [PROJECT_CREDENTIALS]'
 .optimistDemand ['targetProject']
 .optimistExtras (o) ->
   o.describe('targetProject', 'Sphere.io credentials of the target project. Format: `prj-key:clientId:clientSecret`.')
   .alias('targetProject', 't')
-.messageCriteria 'resource(typeId="order")'
-.build()
-.run (argv, stats, requestQueue, cc) ->
+.messageType 'order'
+.build (argv, stats, requestQueue, cc) ->
   targetProject = util.parseProjectsCredentials cc, argv.targetProject
 
   if _.size(targetProject) > 1

@@ -39,7 +39,7 @@
     "q": "~1.0.0",
     "q-io": "~1.10.9",
     "rx": "2.2.13",
-    "sphere-message-processing": "0.3.15",
+    "sphere-message-processing": "0.3.16",
     "nodemailer": "0.6.1"
   },
   "devDependencies": {

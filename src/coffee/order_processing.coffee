@@ -3,7 +3,7 @@ Q = require 'q'
 fs = require 'q-io/fs'
 http = require 'q-io/http'
 _s = require 'underscore.string'
-{MessageProcessing, SphereService, Repeater, ErrorStatusCode} = require 'sphere-message-processing'
+{MessageProcessing, SphereService, Repeater, ErrorStatusCode, LoggerFactory} = require 'sphere-message-processing'
 util = require "./util"
 nodemailer = require "nodemailer"
 
@@ -18,16 +18,24 @@ module.exports = MessageProcessing.builder()
   .describe('emailFrom', 'The sender of the emails.')
   .describe('orderEmailSubject', 'The sender of the emails.')
   .describe('orderEmailTemplate', 'The pathe to the email template: http://underscorejs.org/#template')
+  .describe('sendMailTimeout', 'The timeout of the sendMail operation (in ms)')
   .default('retryAttempts', 10)
+  .default('sendMailTimeout', 60000)
   .default('shippedStateKey', 'Shipped')
 .messageType 'order'
-.build (argv, stats, requestQueue) ->
+.build (argv, stats, requestQueue, cc, rootLogger) ->
+  logger = LoggerFactory.getLogger "orderProcessing.pocessor", rootLogger
+
   Q.spread [util.loadFile(argv.transitionConfig), util.loadFile(argv.smtpConfig), util.loadFile(argv.orderEmailTemplate)], (transitionConfigText, smtpConfig, orderEmailTemplateText) ->
     transitionConfig = if transitionConfigText? and not _s.isBlank(transitionConfigText) then JSON.parse transitionConfigText else []
 
     repeater = new Repeater {attempts: argv.retryAttempts}
-    smtp = nodemailer.createTransport "SMTP", JSON.parse(smtpConfig)
     orderEmailTemplate = _.template orderEmailTemplateText
+
+    createSmtp = ->
+      nodemailer.createTransport "SMTP", JSON.parse(smtpConfig)
+
+    smtp = createSmtp()
 
     getApplicableTransitionPaths = (sphere, lineItem, quantity) ->
       ps = _.map lineItem.state, (s) ->
@@ -74,8 +82,61 @@ module.exports = MessageProcessing.builder()
               (_.reduce missingStates.concat(targetToState), ((acc, state) -> {curr: state, ts: acc.ts.concat({from: acc.curr, to: state})}), {curr: targetFromState, ts: []}).ts
         {processed: true, processingResult: res}
 
+    # use it for dangerous operations that potentially can not call the callback
+    withTimeout = (options) ->
+      {timeout, task, onTimeout} = options
+      start = Date.now()
+      d = Q.defer()
+
+      canceled = false
+
+      timeoutFn = () ->
+        onTimeout()
+        .then (obj) ->
+          d.resolve obj
+        .fail (error) ->
+          d.reject error
+        .done()
+
+        canceled = true
+
+      timeoutObject = setTimeout timeoutFn, timeout
+
+      task()
+      .then (obj) ->
+        if not canceled
+          d.resolve obj
+      .fail (error) ->
+        if not canceled
+          d.reject error
+      .finally () ->
+        if not canceled
+          clearTimeout(timeoutObject)
+        else
+          end = Date.now()
+          logger.error "Nodemailer returned the respoce after the timeout #{timeout}ms! It took it #{end - start}ms to complete."
+      .done()
+
+      d.promise
+
+    sendMail = (sourceInfo, msg, emails, bccEmails, mail) ->
+      withTimeout
+        timeout: argv.sendMailTimeout
+        task: ->
+          d = Q.defer()
+
+          smtp.sendMail mail, (error, resp) ->
+            if error
+              d.reject error
+            else
+              d.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
+
+          d.promise
+        onTimeout: ->
+          smtp = createSmtp()
+          Q.reject new Error("Timeout during mail sending! Nodemailer haven't called the callback within 1 minute during processing of the message #{msg.id} in project #{sourceInfo.sphere.getSourceInfo().prefix}")
+
     processOrderImport = (sourceInfo, msg) ->
-      res = Q.defer()
       emails = sourceInfo.sphere.projectProps['email']
       bccEmails = sourceInfo.sphere.projectProps['bcc-email']
 
@@ -101,15 +162,11 @@ module.exports = MessageProcessing.builder()
         if not _.isEmpty(bccEmails)
           mail.bcc = bccEmails.join(", ")
 
-        smtp.sendMail mail, (error, resp) ->
-          if error
-            res.reject error
-          else
-            res.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
+        sendMail sourceInfo, msg, emails, bccEmails, mail
+        .then ->
+          {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
       else
-        res.resolve {processed: true, processingResult: {ignored: true, reason: "no TO"}}
-
-      res.promise
+        Q({processed: true, processingResult: {ignored: true, reason: "no TO"}})
 
     processLineItemStateTransition = (sourceInfo, msg, log) ->
       sphere = sourceInfo.sphere

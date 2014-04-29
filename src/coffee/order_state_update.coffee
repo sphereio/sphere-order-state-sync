@@ -103,10 +103,10 @@ module.exports = MessageProcessing.builder()
             else
               {ignored: true, reason: "Conditions not met"}
 
-    getMasterOrderId = (sphere, msg) ->
-      if sphere?
+    getMasterOrderId = (sourceSphere, targetSphere, msg) ->
+      if targetSphere?
         masterSyncInfosP = _.map msg.resource.obj.syncInfo, (si) ->
-          sphere.getChannelByRef(si.channel)
+          sourceSphere.getChannelByRef(si.channel)
           .then (ch) ->
             {channel: ch, syncInfo: si}
 
@@ -124,7 +124,7 @@ module.exports = MessageProcessing.builder()
     changeOrderStateIfNeeded = (sourceInfo, msg) ->
       sphere = sourceInfo.sphere
 
-      getMasterOrderId(targetSphere, msg)
+      getMasterOrderId(sphere, targetSphere, msg)
       .then (masterOrderId) ->
         Q.spread [
           sphere.getStateByRef(msg.fromState)

@@ -53,7 +53,7 @@ module.exports = MessageProcessing.builder()
 
       completedLineItem = _.find lineItemData.value, (li) ->
         _.some li, (q, state) ->
-          # BEWARE!!! This line assumes that line items have quantity 1. Removing this assumption from here would not be so easy.
+          # BEWARE!!!! This line assumes that line items have quantity 1. Removing this assumption from here would not be so easy.
           state in ['shipped', 'returnApproved', 'closed'] and (li.CANCELLED_QUANTITY < q)
 
       completedLineItem? and not lineItemWithActionableState?

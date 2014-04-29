@@ -13,7 +13,7 @@ describe 'Order State Update', ->
 
   testProject = "#{config.project_key}:#{config.client_id}:#{config.client_secret}"
 
-  setupTestProject = (stats, requestQueue) ->
+  setupTestProject = (stats, requestQueue, onlyOneOrderWith3LineItems = true) ->
     SphereService.create stats,
       processorName: "test-kit"
       requestQueue: requestQueue
@@ -23,7 +23,7 @@ describe 'Order State Update', ->
           client_id: config.client_id
           client_secret: config.client_secret
     .then (sphere) ->
-      SphereTestKit.setupProject sphere, true
+      SphereTestKit.setupProject sphere, onlyOneOrderWith3LineItems
 
   orZero = (x) ->
     if x? then x else 0
@@ -120,4 +120,50 @@ describe 'Order State Update', ->
       {lineItemIdx: 2, quantity: 30, path: ['closed', 'shipped']}
       {lineItemIdx: 0, quantity: 30, path: ['closed', 'shipped']}
     ]
+  , 60000
+
+  it 'should update state in master and retailer if configured so', (done) ->
+    processor = OrderStateUpdate().init statsOptions(),
+      sourceProjects: testProject
+      targetProject: testProject
+      heartbeatInterval: 500
+      logLevel: 'warn'
+
+    setupTestProject processor.stats, processor.requestQueue, false
+    .then (kit) ->
+      kit.order = kit.orders[0].retailerOrder
+
+      kit.transitionStatePath 0, 30, ['Initial', 'picking', 'shipped', 'closed']
+      .then -> kit
+    .then (kit) ->
+      d = Q.defer()
+
+      subscription = processor.start [kit.orders[0].retailerOrder.id]
+      .subscribe (event) ->
+        stats = processor.stats.toJSON(true)
+
+        if stats.processingErrors > 0
+          subscription.dispose()
+          d.reject "Messages processing failed"
+        else if (orZero(stats['LineItemStateTransition.processed']) + orZero(stats['LineItemStateTransition.ignored'])) is 3
+          subscription.dispose()
+
+          Q.spread [
+            kit.sphere.getOrderById(kit.orders[0].retailerOrder.id)
+            kit.sphere.getOrderById(kit.orders[0].masterOrder.id)
+          ], (retailerOrder, masterOrder) ->
+            if retailerOrder.orderState is 'Complete' and masterOrder.orderState is 'Complete'
+              d.resolve()
+            else
+              d.reject new Error("Order is expected to be in state 'Complete'! Actial Retailer: '#{retailerOrder.orderState}', master: '#{masterOrder.orderState}'.")
+          .fail (error) ->
+            d.reject error
+          .done()
+
+      d.promise
+    .then ->
+      SphereTestKit.reportSuccess done, null, processor
+    .fail (error) ->
+      SphereTestKit.reportFailure done, error, null, processor
+    .done()
   , 60000

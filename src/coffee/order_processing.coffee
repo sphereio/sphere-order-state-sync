@@ -30,6 +30,7 @@ module.exports = MessageProcessing.builder()
     transitionConfig = if transitionConfigText? and not _s.isBlank(transitionConfigText) then JSON.parse transitionConfigText else []
 
     repeater = new Repeater {attempts: argv.retryAttempts}
+    sendMailRepeater = new Repeater {attempts: 3, timeout: 10000}
     orderEmailTemplate = _.template orderEmailTemplateText
 
     createSmtp = ->
@@ -120,21 +121,24 @@ module.exports = MessageProcessing.builder()
       d.promise
 
     sendMail = (sourceInfo, msg, emails, bccEmails, mail) ->
-      withTimeout
-        timeout: argv.sendMailTimeout
+      sendMailRepeater.execute
+        recoverableError: (e) -> true
         task: ->
-          d = Q.defer()
+          withTimeout
+            timeout: argv.sendMailTimeout
+            task: ->
+              d = Q.defer()
 
-          smtp.sendMail mail, (error, resp) ->
-            if error
-              d.reject error
-            else
-              d.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
+              smtp.sendMail mail, (error, resp) ->
+                if error
+                  d.reject error
+                else
+                  d.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
 
-          d.promise
-        onTimeout: ->
-          smtp = createSmtp()
-          Q.reject new Error("Timeout during mail sending! Nodemailer haven't called the callback within 1 minute during processing of the message #{msg.id} in project #{sourceInfo.sphere.getSourceInfo().prefix}")
+              d.promise
+            onTimeout: ->
+              smtp = createSmtp()
+              Q.reject new Error("Timeout during mail sending! Nodemailer haven't called the callback within 1 minute during processing of the message #{msg.id} in project #{sourceInfo.sphere.getSourceInfo().prefix}")
 
     processOrderImport = (sourceInfo, msg) ->
       emails = sourceInfo.sphere.projectProps['email']

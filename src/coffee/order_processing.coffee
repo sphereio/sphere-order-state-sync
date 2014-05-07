@@ -3,7 +3,7 @@ Q = require 'q'
 fs = require 'q-io/fs'
 http = require 'q-io/http'
 _s = require 'underscore.string'
-{MessageProcessing, SphereService, Repeater, ErrorStatusCode, LoggerFactory} = require 'sphere-message-processing'
+{MessageProcessing, SphereService, Repeater, ErrorStatusCode, LoggerFactory, TaskQueue} = require 'sphere-message-processing'
 util = require "./util"
 nodemailer = require "nodemailer"
 
@@ -20,7 +20,7 @@ module.exports = MessageProcessing.builder()
   .describe('orderEmailTemplate', 'The pathe to the email template: http://underscorejs.org/#template')
   .describe('sendMailTimeout', 'The timeout of the sendMail operation (in ms)')
   .default('retryAttempts', 10)
-  .default('sendMailTimeout', 60000)
+  .default('sendMailTimeout', 300000)
   .default('shippedStateKey', 'Shipped')
 .messageType 'order'
 .build (argv, stats, requestQueue, cc, rootLogger) ->
@@ -30,13 +30,14 @@ module.exports = MessageProcessing.builder()
     transitionConfig = if transitionConfigText? and not _s.isBlank(transitionConfigText) then JSON.parse transitionConfigText else []
 
     repeater = new Repeater {attempts: argv.retryAttempts}
-    sendMailRepeater = new Repeater {attempts: 3, timeout: 10000}
+    sendMailQueue = new TaskQueue stats, {maxParallelTasks: 1}
+    sendMailRepeater = new Repeater {attempts: 2, timeout: 20000}
     orderEmailTemplate = _.template orderEmailTemplateText
 
-    createSmtp = ->
-      nodemailer.createTransport "SMTP", JSON.parse(smtpConfig)
+    smtpConfigObj = JSON.parse(smtpConfig)
 
-    smtp = createSmtp()
+    createTransport = ->
+      nodemailer.createTransport "SMTP", smtpConfigObj
 
     getApplicableTransitionPaths = (sphere, lineItem, quantity) ->
       ps = _.map lineItem.state, (s) ->
@@ -120,25 +121,47 @@ module.exports = MessageProcessing.builder()
 
       d.promise
 
+    closeTransport = (t) ->
+      d = Q.defer()
+
+      t.close ->
+        d.resolve()
+
+      d.promise
+
     sendMail = (sourceInfo, msg, emails, bccEmails, mail) ->
+      transport = null
+
       sendMailRepeater.execute
         recoverableError: (e) -> true
         task: ->
           withTimeout
             timeout: argv.sendMailTimeout
             task: ->
-              d = Q.defer()
+              send = (t) ->
+                d = Q.defer()
 
-              smtp.sendMail mail, (error, resp) ->
-                if error
-                  d.reject error
-                else
-                  d.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
+                t.sendMail mail, (error, resp) ->
+                  if error
+                    d.reject error
+                  else
+                    d.resolve {processed: true, processingResult: {emails: emails, bccEmails: bccEmails}}
 
-              d.promise
+                d.promise
+
+              sendMailQueue.addTask ->
+                transport = createTransport()
+                send transport
+                .finally ->
+                  closeTransport transport
             onTimeout: ->
-              smtp = createSmtp()
-              Q.reject new Error("Timeout during mail sending! Nodemailer haven't called the callback within 1 minute during processing of the message #{msg.id} in project #{sourceInfo.sphere.getSourceInfo().prefix}")
+              reject = Q.reject new Error("Timeout during mail sending! Nodemailer haven't called the callback within 5 minutes during processing of the message #{msg.id} in project #{sourceInfo.sphere.getSourceInfo().prefix}")
+
+              if transport?
+                closeTransport transport
+                .then -> reject
+              else
+                reject
 
     processOrderImport = (sourceInfo, msg) ->
       emails = sourceInfo.sphere.projectProps['email']

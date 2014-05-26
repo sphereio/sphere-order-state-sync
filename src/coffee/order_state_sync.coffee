@@ -1,7 +1,7 @@
 Q = require 'q'
 {_} = require 'underscore'
 _s = require 'underscore.string'
-{util, MessageProcessing, SphereService} = require 'sphere-message-processing'
+{util, MessageProcessing, SphereService, Repeater} = require 'sphere-message-processing'
 util1 = require "./util"
 
 module.exports = MessageProcessing.builder()
@@ -16,6 +16,7 @@ module.exports = MessageProcessing.builder()
 .messageExpand ['fromState', 'toState']
 .build (argv, stats, requestQueue, cc) ->
   targetProject = util.parseProjectsCredentials cc, argv.targetProject
+  repeater = new Repeater {attempts: 5}
 
   if _.size(targetProject) > 1
     throw new Error("Only one target project is allowed.")
@@ -56,9 +57,12 @@ module.exports = MessageProcessing.builder()
         actualTransitions = _.map ts, (transition) ->
           {quantity: quantity, fromState: ref(transition.from), toState: ref(transition.to), date: date}
 
-        targetSphereService.transitionLineItemStates targetOrder, targetLineItemId, actualTransitions
-        .then (resOrder) ->
-          {order: resOrder.id, version: resOrder.version, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
+        repeater.execute
+          recoverableError: (e) -> e instanceof ErrorStatusCode and e.code is 409
+          task: ->
+            targetSphereService.transitionLineItemStates targetOrder, targetLineItemId, actualTransitions
+            .then (resOrder) ->
+              {order: resOrder.id, version: resOrder.version, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
 
     lineItemStateSynchronizer = (sourceInfo, msg) ->
       if not supportedMessage(msg)

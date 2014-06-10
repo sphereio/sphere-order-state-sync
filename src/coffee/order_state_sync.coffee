@@ -1,7 +1,7 @@
 Q = require 'q'
 {_} = require 'underscore'
 _s = require 'underscore.string'
-{util, MessageProcessing, SphereService, Repeater} = require 'sphere-message-processing'
+{util, MessageProcessing, SphereService, Repeater, ErrorStatusCode} = require 'sphere-message-processing'
 util1 = require "./util"
 
 module.exports = MessageProcessing.builder()

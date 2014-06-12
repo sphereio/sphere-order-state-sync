@@ -57,12 +57,9 @@ module.exports = MessageProcessing.builder()
         actualTransitions = _.map ts, (transition) ->
           {quantity: quantity, fromState: ref(transition.from), toState: ref(transition.to), date: date}
 
-        repeater.execute
-          recoverableError: (e) -> e instanceof ErrorStatusCode and e.code is 409
-          task: ->
-            targetSphereService.transitionLineItemStates targetOrder, targetLineItemId, actualTransitions
-            .then (resOrder) ->
-              {order: resOrder.id, version: resOrder.version, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
+        targetSphereService.transitionLineItemStates targetOrder, targetLineItemId, actualTransitions
+        .then (resOrder) ->
+          {order: resOrder.id, version: resOrder.version, lineItem: targetLineItemId, quantity: quantity, transitions: _.map(ts, (t) -> t.from.key + " -> " + t.to.key)}
 
     lineItemStateSynchronizer = (sourceInfo, msg) ->
       if not supportedMessage(msg)
@@ -83,12 +80,15 @@ module.exports = MessageProcessing.builder()
           if not masterSyncInfo?
             throw new Error("Sync Info with master order id is not found for the order: #{msg.resource.id}.")
           else
-            tfp = targetSphereService.getStateByKey fromState.key, fromState.type
-            ttp = targetSphereService.getStateByKey toState.key, toState.type
-            to = targetSphereService.getOrderById masterSyncInfo.syncInfo.externalId
+            repeater.execute
+              recoverableError: (e) -> e instanceof ErrorStatusCode and e.code is 409
+              task: ->
+                tfp = targetSphereService.getStateByKey fromState.key, fromState.type
+                ttp = targetSphereService.getStateByKey toState.key, toState.type
+                to = targetSphereService.getOrderById masterSyncInfo.syncInfo.externalId
 
-            Q.spread [tfp, ttp, to], (targetFromState, targetToState, targetOrder) ->
-              doTargetSateTransition targetOrder, targetOrder.lineItems[lineItemIdx].id, msg.quantity, targetFromState, targetToState, msg.transitionDate
+                Q.spread [tfp, ttp, to], (targetFromState, targetToState, targetOrder) ->
+                  doTargetSateTransition targetOrder, targetOrder.lineItems[lineItemIdx].id, msg.quantity, targetFromState, targetToState, msg.transitionDate
         .then (res) ->
           Q({processed: true, processingResult: res})
 

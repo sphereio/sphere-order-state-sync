@@ -65,7 +65,10 @@ module.exports = MessageProcessing.builder()
         if not matchingDeliveries? or _.isEmpty(matchingDeliveries)
           Q.reject new Error("Target order #{targetOrder.id} does not have matching delivery for source delivery #{sourceDelivery.id}")
         else if _.size(matchingDeliveries) > 1
-          Q.reject new Error("Target order #{targetOrder.id} has more than one matching delivery! for source delivery #{JSON.stringify matchingDeliveries}")
+#          Q.reject new Error("Target order #{targetOrder.id} has more than one matching delivery! for source delivery #{JSON.stringify matchingDeliveries}")
+
+          # We decided to just ignore this type of errors.
+          Q({ignored: true, WARN: "Target order #{targetOrder.id} has more than one matching delivery!"})
         else
           targetSphereService.addParcel targetOrder, matchingDeliveries[0].id, sourceParcel.measurements, sourceParcel.trackingData
           .then (resOrder) ->

@@ -233,7 +233,10 @@ module.exports = MessageProcessing.builder()
                     log.push "got inventory #{inventoryEntry.id}@#{inventoryEntry.version}, available quantity: #{inventoryEntry.availableQuantity}. updating stock..."
 
                     if inventoryEntry.availableQuantity < msg.quantity
-                      Q.reject new Error("not enough quantity in inventory entry with ID '#{inventoryEntry.id}' (available: #{inventoryEntry.availableQuantity}, needed: #{msg.quantity})")
+#                      Q.reject new Error("not enough quantity in inventory entry with ID '#{inventoryEntry.id}' (available: #{inventoryEntry.availableQuantity}, needed: #{msg.quantity})")
+
+                      # We decided to just ignore this type of errors.
+                      Q({processed: true, processingResult: {ignored: true, WARN: "not enough quantity in inventory entry with ID '#{inventoryEntry.id}' (available: #{inventoryEntry.availableQuantity}, needed: #{msg.quantity})"}})
                     else
                       sphere.removeInventoryQuantity inventoryEntry, msg.quantity
                       .then (updatedInventoryEntry) ->
